@@ -1,0 +1,17 @@
+syntax = "proto3";
+package health;
+
+service HealthService {
+    rpc Check (HealthRequest) returns (HealthResponse);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+    EngineStatus status = 1;
+}
+
+enum EngineStatus {
+    STARTING = 0;
+    READY    = 1;
+}

@@ -1,0 +1,224 @@
+syntax = "proto3";
+package graph;
+
+service GraphService {
+    rpc CreateNode       (CreateNodeRequest)   returns (CreateNodeResponse);
+    rpc ListNodes        (ListNodesRequest)    returns (ListNodesResponse);
+    // Compact edge type write: create or update a relationship edge.
+    rpc UpsertEdge       (UpsertEdgeRequest)   returns (UpsertEdgeResponse);
+    // Compact edge type read: get current payload for a specific pair.
+    rpc GetEdgeState     (GetEdgeStateRequest) returns (GetEdgeStateResponse);
+    rpc UpdateNode       (UpdateNodeRequest)   returns (UpdateResponse);
+    rpc DeleteNode       (DeleteNodeRequest)   returns (DeleteResponse);
+    rpc GetNode          (GetNodeRequest)      returns (NodeResponse);
+    rpc GetNeighbors     (NeighborQuery)       returns (NeighborResponse);
+    rpc GetNeighborCount (CountQuery)          returns (CountResponse);
+    // Neighbor with max last_seen; optional exclude for impossible-travel (e.g. current IP).
+    rpc GetLastNeighbor  (LastNeighborQuery)   returns (LastNeighborResponse);
+}
+
+message NodeRef {
+    oneof identifier {
+        uint64 node_id    = 1;
+        ExternalRef external = 2;
+    }
+}
+
+message ExternalRef {
+    string node_type_name = 1;
+    string external_id    = 2;
+}
+
+message PropertyValue {
+    oneof value {
+        int64  int_val       = 1;
+        double float_val     = 2;
+        int64  timestamp_val = 3;
+        string string_val    = 4;
+        bool   bool_val      = 5;
+    }
+}
+
+message PropertyEntry {
+    string         name  = 1;
+    PropertyValue  value = 2;
+}
+
+message CreateNodeRequest {
+    string               node_type_name = 1;
+    optional string      external_id    = 2;
+    repeated PropertyEntry properties   = 3;
+}
+
+message CreateNodeResponse {
+    uint64 node_id = 1;
+    bool   created = 2;  // true if newly created; false if idempotent (external_id existed)
+}
+
+message UpdateNodeRequest {
+    NodeRef              node   = 1;
+    repeated PropertyEntry props = 2;
+}
+
+message UpdateResponse {}
+message DeleteResponse {}
+
+message DeleteNodeRequest {
+    NodeRef node = 1;
+}
+
+message GetNodeRequest {
+    NodeRef node = 1;
+}
+
+message NodeResponse {
+    uint64               node_id       = 1;
+    string               node_type     = 2;
+    optional string      external_id   = 3;
+    repeated PropertyEntry properties  = 4;
+}
+
+message EdgeFilter {
+    optional int64 min_created_at_us = 1;
+    optional int64 max_created_at_us = 2;
+    repeated PropertyPredicate property_filters = 3;
+}
+
+message PropertyPredicate {
+    string property_name = 1;
+    oneof predicate {
+        int64  int_gt   = 2;
+        int64  int_lt   = 3;
+        int64  int_eq   = 4;
+        int64  ts_after  = 5;
+        int64  ts_before = 6;
+    }
+}
+
+message NeighborQuery {
+    NodeRef            node          = 1;
+    string             edge_type     = 2;
+    bool               out_neighbors = 3;
+    optional EdgeFilter filter       = 4;
+    uint32             limit         = 5;   // 0 = unlimited (default)
+    uint64             cursor        = 6;   // neighbor_node_id after which to resume; 0 = start
+}
+
+message NeighborEdge {
+    uint64 neighbor_node_id = 1;
+    uint64 edge_id          = 2;
+    int64  created_at_us    = 3;
+    repeated PropertyEntry edge_props = 4;
+}
+
+message NeighborResponse {
+    repeated NeighborEdge edges    = 1;
+    bool                  has_more = 2;   // true if more results exist
+}
+
+message CountQuery {
+    NodeRef node      = 1;
+    string  edge_type = 2;
+}
+
+message CountResponse {
+    uint64 count = 1;
+    bool   approximate = 2;
+}
+
+message LastNeighborQuery {
+    NodeRef node = 1;
+    string  edge_type = 2;
+    optional NodeRef exclude_neighbor = 3;
+}
+
+message LastNeighborResponse {
+    bool   found = 1;
+    uint64 neighbor_node_id = 2;
+    uint32 last_seen_secs = 3;
+}
+
+// ---------------------------------------------------------------------------
+// ListNodes — query all nodes with external IDs registered in the engine
+// ---------------------------------------------------------------------------
+
+message ListNodesRequest {
+    // Optional filter: only return nodes of this type.
+    // Empty string = return all node types.
+    string node_type_filter = 1;
+    // Optional substring filter on external_id.
+    string external_id_filter = 2;
+    // Max results (0 = unlimited).
+    uint32 limit = 3;
+}
+
+message NodeSummary {
+    uint64 node_id    = 1;
+    string node_type  = 2;
+    string external_id = 3;
+}
+
+message ListNodesResponse {
+    repeated NodeSummary nodes = 1;
+    uint32 total_count = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Compact edge type messages
+// ---------------------------------------------------------------------------
+
+message UpsertEdgeRequest {
+    string edge_type_name   = 1;
+    NodeRef src             = 2;
+    NodeRef dst             = 3;
+    // Bit positions to set in the flags field (OR operation).
+    uint64 flag_set_mask    = 4;
+    // Bit positions to clear in the flags field (AND-NOT operation).
+    uint64 flag_clear_mask  = 5;
+    // Value of the tracked numeric property (e.g. transaction amount).
+    optional float numeric_value = 6;
+    // Event timestamp in epoch seconds. If absent, server time is used.
+    optional uint32 event_ts_secs = 7;
+}
+
+message UpsertEdgeResponse {
+    // True if this call created a new relationship pair; false if it updated an existing one.
+    bool created_new = 1;
+    // Snapshot of the payload after the update.
+    CompactEdgePayloadProto payload = 2;
+}
+
+message CompactEdgePayloadProto {
+    uint64 flags       = 1;
+    // Bin counts 0–7 as a byte array (8 bytes).
+    bytes  bins        = 2;
+    float  approx_sum  = 3;
+    uint32 tx_count    = 4;
+    uint32 last_seen   = 5;
+    // Human-readable names of all currently-set flag bits (from schema).
+    repeated string active_flag_names = 6;
+}
+
+message GetEdgeStateRequest {
+    string  edge_type_name = 1;
+    NodeRef src            = 2;
+    NodeRef dst            = 3;
+    // Optional: filter by tracked numeric value. Returns filtered_count and filtered_approx_sum.
+    // min_value: bins >= threshold. max_value: bins <= threshold. Both: range.
+    optional float min_value = 4;
+    optional float max_value = 5;
+    // For activity-bitmap edge types: query time (epoch secs) and windows to compute counts.
+    optional uint32 query_time_secs = 6;
+    repeated uint64 activity_windows_secs = 7;
+}
+
+message GetEdgeStateResponse {
+    bool found             = 1;
+    CompactEdgePayloadProto payload = 2;
+    // When min_value/max_value set: count and estimated sum for events in filtered bins.
+    uint32 filtered_count     = 3;
+    float  filtered_approx_sum = 4;
+    // When activity_bitmap + query_time_secs + activity_windows_secs: tx count per window.
+    repeated uint32 activity_counts = 5;
+}
+

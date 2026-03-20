@@ -1,0 +1,32 @@
+[package]
+name = "fraud-graph-client"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+description = "Rust gRPC client library for the Fraud Graph Engine (compact edge model)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/FraudManagement"
+readme = "README.md"
+keywords = ["fraud", "graph", "grpc", "client"]
+categories = ["network-programming", "database"]
+
+[lib]
+name = "fraud_graph_client"
+path = "src/lib.rs"
+
+[dependencies]
+tokio        = { version = "1.50", features = ["net", "time", "sync", "rt-multi-thread"] }
+tonic        = "0.12.3"
+prost        = "0.13.5"
+prost-types  = "0.13.5"
+thiserror    = "1"
+anyhow       = "1"
+
+[[example]]
+name = "quickstart"
+path = "examples/quickstart.rs"
+
+[build-dependencies]
+tonic-build = "0.12.3"
+# prost-build pulls `tempfile`; 3.11+ depends on getrandom 0.4 which needs Cargo edition2024 support.
+tempfile    = "=3.10.1"

@@ -1,0 +1,205 @@
+syntax = "proto3";
+package features;
+
+service FeatureService {
+    rpc GetFraudContext      (FraudContextQuery)        returns (FraudContext);
+    rpc FlagNode             (FlagRequest)              returns (FlagResponse);
+    rpc UnflagNode           (UnflagRequest)            returns (UnflagResponse);
+    // Compact edge type: query timed histogram for a node.
+    rpc QueryNodeHistogram   (NodeHistogramQuery)       returns (NodeHistogramResult);
+    // Combined scoring feature vector for a node across multiple edge types.
+    rpc GetNodeFeatureVector (NodeFeatureVectorRequest) returns (NodeFeatureVectorResponse);
+}
+
+message NodeRef {
+    oneof identifier {
+        uint64 node_id     = 1;
+        ExternalRef external = 2;
+    }
+}
+
+message ExternalRef {
+    string node_type_name = 1;
+    string external_id    = 2;
+}
+
+message FeatureRequest {
+    NodeRef node      = 1;
+    string  edge_type = 2;
+}
+
+message FeatureVector {
+    uint64 hll_cardinality_estimate = 1;
+    repeated VelocityWindow velocity_windows = 2;
+}
+
+message VelocityWindow {
+    uint64 window_secs = 1;
+    uint64 count       = 2;
+}
+
+message VelocityQuery {
+    NodeRef node        = 1;
+    string  edge_type   = 2;
+    uint64  window_secs = 3;
+}
+
+message VelocityResponse {
+    uint64 count = 1;
+}
+
+message AggregationSpec {
+    string      property_name = 1;
+    AggFunction function      = 2;
+}
+
+enum AggFunction {
+    AGG_COUNT = 0;
+    AGG_SUM   = 1;
+    AGG_AVG   = 2;
+    AGG_MIN   = 3;
+    AGG_MAX   = 4;
+}
+
+message PropertyPredicate {
+    string property_name = 1;
+    oneof predicate {
+        int64 int_gt   = 2;
+        int64 int_lt   = 3;
+        int64 int_eq   = 4;
+        int64 ts_after  = 5;
+        int64 ts_before = 6;
+    }
+}
+
+message EdgeFilter {
+    optional int64 min_created_at_us = 1;
+    optional int64 max_created_at_us = 2;
+    repeated PropertyPredicate property_filters = 3;
+}
+
+message EdgeWindowQuery {
+    NodeRef                  node              = 1;
+    string                   edge_type         = 2;
+    int64                    window_start_us   = 3;
+    int64                    window_end_us     = 4;
+    repeated AggregationSpec aggregations      = 5;
+    optional EdgeFilter      property_filter   = 6;
+    bool                     include_edge_ids  = 7;
+}
+
+message AggregationResult {
+    string      property_name = 1;
+    AggFunction function      = 2;
+    oneof value {
+        double float_value = 3;
+        int64  int_value   = 4;
+    }
+}
+
+message EdgeWindowResult {
+    uint64                    edge_count          = 1;
+    repeated AggregationResult aggregation_results = 2;
+    repeated uint64            edge_ids            = 3;
+}
+
+message FraudContextQuery {
+    repeated NodeRef nodes = 1;
+}
+
+message NodeFraudInfo {
+    uint64 node_id     = 1;
+    float  fraud_score = 2;
+    string reason      = 3;
+}
+
+message FraudContext {
+    repeated NodeFraudInfo flagged_nodes = 1;
+}
+
+message FlagRequest {
+    NodeRef node        = 1;
+    float   fraud_score = 2;
+    string  reason      = 3;
+}
+
+message FlagResponse {}
+
+message UnflagRequest {
+    NodeRef node = 1;
+}
+
+message UnflagResponse {}
+
+// ---------------------------------------------------------------------------
+// Compact edge type feature queries (new)
+// ---------------------------------------------------------------------------
+
+// Query timed histogram data for a node across a time window.
+message NodeHistogramQuery {
+    NodeRef node            = 1;
+    string  edge_type_name  = 2;
+    // Window in hours (uses hourly tier) or days (uses daily tier).
+    // window_hours takes priority if both are set.
+    uint32  window_hours    = 3;
+    uint32  window_days     = 4;
+    // Whether to return per-slot breakdown (vs aggregated totals only).
+    bool    include_buckets = 5;
+}
+
+message HistogramBins {
+    // 8 bin counts. Index corresponds to the schema-defined bin boundaries.
+    repeated uint32 counts    = 1;
+    // Human-readable bin labels (from schema, e.g. "$100–$500").
+    repeated string bin_labels = 2;
+}
+
+message NodeHistogramResult {
+    // Aggregated bin counts across the requested window.
+    HistogramBins totals          = 1;
+    // Total event count across all bins and slots in the window.
+    uint32        total_events    = 2;
+    // Per-slot breakdown (if requested). Index 0 = oldest slot.
+    repeated HistogramBins buckets = 3;
+    // Window actually covered (in seconds).
+    uint64        window_covered_secs = 4;
+}
+
+// Combined feature vector for a node — single call for ML scoring.
+message NodeFeatureVectorRequest {
+    NodeRef        node       = 1;
+    // Which compact edge types to include.
+    repeated string edge_types = 2;
+    // Window for histogram queries (hours).
+    uint32 histogram_window_hours = 3;
+    // Window for histogram queries (days).
+    uint32 histogram_window_days  = 4;
+    // Nodes to check for fraud edge (e.g. merchant, device, IP from transaction).
+    // If empty, only the primary node is checked.
+    repeated NodeRef nodes_to_check_fraud = 5;
+}
+
+message EdgeTypeFeatures {
+    string        edge_type_name    = 1;
+    // Exact unique neighbor count (from CompactNeighborStore.len()).
+    uint64        neighbor_count    = 2;
+    // Current payload flags union across all neighbors of this type.
+    uint64        flags_union       = 3;
+    // Active flag names from flags_union.
+    repeated string active_flags    = 4;
+    // Histogram totals for the requested window.
+    HistogramBins   hourly_bins     = 5;
+    HistogramBins   daily_bins      = 6;
+    // Aggregate stats across all pairs of this type from this node.
+    float           total_approx_sum = 7;
+    uint32          total_tx_count   = 8;
+}
+
+message NodeFeatureVectorResponse {
+    uint64 node_id                        = 1;
+    repeated EdgeTypeFeatures edge_features = 2;
+    // Fraud context from FraudFlagStore.
+    float  direct_fraud_score             = 3;
+    uint32 fraudulent_neighbor_count      = 4;
+    float  max_neighbor_fraud_score       = 5;
+}
