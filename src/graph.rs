@@ -12,6 +12,20 @@ use graph_proto::{
     node_ref::Identifier,
 };
 
+/// Decode 16 bytes (8 × little-endian u16) from the proto `bins` field into `[u16; 8]`.
+/// Gracefully returns all-zeros if the server sent fewer bytes (e.g. a slim/non-numeric edge).
+fn decode_bins(bytes: &[u8]) -> [u16; 8] {
+    let mut out = [0u16; 8];
+    for (i, chunk) in bytes.chunks(2).enumerate().take(8) {
+        out[i] = match chunk {
+            [lo, hi] => u16::from_le_bytes([*lo, *hi]),
+            [lo]     => *lo as u16,
+            _        => 0,
+        };
+    }
+    out
+}
+
 #[derive(Clone)]
 pub struct GraphClient {
     client: GraphServiceClient<Channel>,
@@ -98,7 +112,7 @@ impl GraphClient {
         let r = self.client.clone().upsert_edge(req).await.map_err(ClientError::from)?;
         let inner = r.into_inner();
         let payload = inner.payload.ok_or_else(|| ClientError::Internal("missing payload".into()))?;
-        let bins: [u8; 8] = payload.bins.try_into().unwrap_or([0u8; 8]);
+        let bins = decode_bins(&payload.bins);
         Ok(UpsertEdgeResult {
             created_new: inner.created_new,
             tx_count: payload.tx_count,
@@ -135,7 +149,7 @@ impl GraphClient {
             return Ok(None);
         }
         let payload = inner.payload.ok_or_else(|| ClientError::Internal("missing payload".into()))?;
-        let bins: [u8; 8] = payload.bins.try_into().unwrap_or([0u8; 8]);
+        let bins = decode_bins(&payload.bins);
         Ok(Some(EdgeState {
             found: true,
             tx_count: payload.tx_count,

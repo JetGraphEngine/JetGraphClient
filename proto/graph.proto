@@ -189,12 +189,14 @@ message UpsertEdgeResponse {
 }
 
 message CompactEdgePayloadProto {
-    uint64 flags       = 1;
-    // Bin counts 0–7 as a byte array (8 bytes).
-    bytes  bins        = 2;
-    float  approx_sum  = 3;
-    uint32 tx_count    = 4;
-    uint32 last_seen   = 5;
+    uint64 flags      = 1;
+    // Bin counts 0–7 as 16 bytes: each bin is a little-endian u16, max 65 535.
+    // Zeros for slim (non-numeric) edge types.
+    bytes  bins       = 2;
+    // Approximate sum of the tracked numeric property; 0.0 for slim edge types.
+    float  approx_sum = 3;
+    uint32 tx_count   = 4;
+    uint32 last_seen  = 5;
     // Human-readable names of all currently-set flag bits (from schema).
     repeated string active_flag_names = 6;
 }
