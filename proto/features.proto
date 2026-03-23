@@ -183,9 +183,9 @@ message EdgeTypeFeatures {
     string        edge_type_name    = 1;
     // Exact unique neighbor count (from CompactNeighborStore.len()).
     uint64        neighbor_count    = 2;
-    // Union of activity bitmap raw values across all neighbors of this type.
+    // Union of raw activity bitmap values across all neighbors of this type.
     uint64        activity_bitmap_union = 3;
-    // Fields 4 (active_flags) was removed. Reserved to prevent field number reuse.
+    // Field 4 was active_flags (removed). Reserved to prevent field number reuse.
     reserved 4;
     reserved "active_flags";
     // Histogram totals for the requested window.

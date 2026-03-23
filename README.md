@@ -46,4 +46,16 @@ See the crate-level docs (`src/lib.rs`) and the former integration notes in the 
 
 ### Keeping protos in sync
 
-When the engine’s `proto/*.proto` changes, copy the updated files into this project’s `proto/` directory and bump the crate version if you publish.
+The **canonical** definitions live in the engine repo: **`Graph/proto/*.proto`**.  
+When those files change, copy them here so this crate stays on the latest wire format:
+
+```bash
+cp ../Graph/proto/*.proto proto/
+cargo build
+```
+
+Verify there is no drift:
+
+```bash
+diff -rq ../Graph/proto proto
+```
