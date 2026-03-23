@@ -23,29 +23,20 @@
 //! | OWNS_ACCOUNT | customer | account  | Permanent · structural                     |
 //! | HAS_CARD     | account  | card     | Permanent · structural                     |
 //! | CARD_TO_BIN  | card     | bin      | Permanent · structural                     |
-//! | TRANSACTS_AT | card     | merchant | 90d TTL · amount bins ($5–$1k) · 5 flags  |
-//! | USES_DEVICE  | card     | device   | 30d TTL · 5-min activity bitmap            |
-//! | USES_IP      | card     | ip       | 30d TTL · 5-min activity bitmap            |
-//! | LINKED_ACCT  | account  | account  | Permanent · 3 money-mule flags             |
-//!
-//! ### TRANSACTS_AT Flags (bit positions)
-//! | Bit | Name                | Fraud Signal                                    |
-//! |-----|---------------------|-------------------------------------------------|
-//! |  0  | HIGH_RISK_MERCHANT  | MCC: gambling(7995), crypto(6051), wire(4829)   |
-//! |  1  | CARD_NOT_PRESENT    | E-commerce / MOTO — no physical card            |
-//! |  2  | CROSS_BORDER        | Merchant country ≠ cardholder billing country   |
-//! |  3  | HIGH_VALUE          | Single transaction ≥ $500                       |
-//! |  4  | PREVIOUSLY_DECLINED | Card declined at this merchant before           |
+//! | TRANSACTS_AT | card     | merchant | 90d TTL · amount bins ($5–$1k) · 1h activity bitmap |
+//! | USES_DEVICE  | card     | device   | 30d TTL · 5-min activity bitmap                     |
+//! | USES_IP      | card     | ip       | 30d TTL · 5-min activity bitmap                     |
+//! | LINKED_ACCT  | account  | account  | Permanent · 1h activity bitmap                      |
 //!
 //! ### Fraud Scenarios Injected for Demo
-//! 1. **Card Testing**      — card-tester-001: 150 CNP hits, $0.50–$4.99, many merchants
+//! 1. **Card Testing**      — card-tester-001: 150 micro-transactions, many merchants
 //! 2. **Account Takeover**  — card-ato-001: normal history → sudden $800–$3k intl spike
 //! 3. **Device Farm**       — device-farm-001: 500 unrelated cards share one device
 //! 4. **Impossible Travel** — card-itv-001: New York → London in 8 minutes
 //! 5. **Money Mule Chain**  — 3 linked accounts flagged for investigation
 //!
 //! ### Demo Queries
-//! Q1  Edge State      — TX stats & active flags for a card↔merchant pair
+//! Q1  Edge State      — TX stats & activity bitmap for a card↔merchant pair
 //! Q2  Neighbors       — Paginated merchant list for a card-testing card (velocity)
 //! Q3  Neighbor Count  — Unique merchant velocity alert
 //! Q4  Last Neighbor   — Previous IP for impossible-travel detection
@@ -61,34 +52,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::Semaphore;
 
-use fraud_graph_client::schema::schema_proto::FlagDef;
 use fraud_graph_client::{Client, NodeRef, PropertyEntry, PropertyValue, ValueType};
-
-// ---------------------------------------------------------------------------
-// Flag bit masks — TRANSACTS_AT
-// ---------------------------------------------------------------------------
-
-/// MCC in high-risk group: gambling (7995), crypto (6051), wire transfer (4829)
-const TX_HIGH_RISK: u64 = 1 << 0;
-/// Card-not-present: e-commerce or MOTO — no physical swipe/tap
-const TX_CNP: u64 = 1 << 1;
-/// Cross-border: merchant country differs from cardholder billing country
-const TX_INTL: u64 = 1 << 2;
-/// High-value: single transaction amount ≥ $500
-const TX_HIGH_VAL: u64 = 1 << 3;
-/// Previously declined: card was declined at this exact merchant before
-const TX_DECLINED: u64 = 1 << 4;
-
-// ---------------------------------------------------------------------------
-// Flag bit masks — LINKED_ACCT
-// ---------------------------------------------------------------------------
-
-/// Both accounts are part of a suspected money-mule funding ring
-const LNK_MULE: u64 = 1 << 0;
-/// Both accounts were accessed from the same device fingerprint
-const LNK_DEV: u64 = 1 << 1;
-/// Both accounts registered or logged in from the same IP range
-const LNK_IP: u64 = 1 << 2;
 
 /// Max concurrent in-flight gRPC calls during bulk data load.
 const CONCURRENCY: usize = 64;
@@ -189,7 +153,7 @@ async fn bulk_create_nodes(
 }
 
 // ---------------------------------------------------------------------------
-// Bulk edge upsert helper — simple edges (no flags)
+// Bulk edge upsert helper
 // ---------------------------------------------------------------------------
 
 async fn bulk_upsert_edges(
@@ -207,39 +171,6 @@ async fn bulk_upsert_edges(
         let permit = sem.clone().acquire_owned().await.unwrap();
         handles.push(tokio::spawn(async move {
             let r = c.upsert_edge(&et2, src, dst, val, ts).await;
-            drop(permit);
-            r
-        }));
-    }
-
-    for h in handles {
-        h.await??;
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Bulk edge upsert helper — edges with flags (TRANSACTS_AT, LINKED_ACCT)
-// ---------------------------------------------------------------------------
-
-async fn bulk_upsert_flagged_edges(
-    client: &Client,
-    edge_type: &str,
-    items: Vec<(NodeRef, NodeRef, u64, Option<f32>, Option<u32>)>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let sem = Arc::new(Semaphore::new(CONCURRENCY));
-    let mut handles = Vec::with_capacity(items.len());
-    let et = edge_type.to_string();
-
-    for (src, dst, flags, val, ts) in items {
-        let c = client.clone();
-        let et2 = et.clone();
-        let permit = sem.clone().acquire_owned().await.unwrap();
-        handles.push(tokio::spawn(async move {
-            let r = c
-                .graph()
-                .upsert_edge(&et2, src, dst, flags, 0, val, ts)
-                .await;
             drop(permit);
             r
         }));
@@ -299,21 +230,21 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         println!("  node type: {nt}");
     }
 
-    // ── Structural edges (permanent, no histograms needed) ──────────────────
+    // ── Structural edges (permanent) ────────────────────────────────────────
     for (name, from, to) in &[
         ("OWNS_ACCOUNT", "customer", "account"),
         ("HAS_CARD", "account", "card"),
         ("CARD_TO_BIN", "card", "bin"),
     ] {
-        s.register_compact_edge_type(name, from, to, 0, vec![], vec![], "", None)
+        s.register_compact_edge_type(name, from, to, 0, vec![], "", 3_600)
             .await?;
         println!("  edge type: {name}");
     }
 
     // ── TRANSACTS_AT: Card → Merchant ───────────────────────────────────────
-    // The most important edge. Tracks every purchase event with:
+    // Tracks every purchase event with:
     //   - Amount histogram (8 bins from <$5 to ≥$1k) for spending pattern analysis
-    //   - 5 fraud-signal flags for rule-based scoring
+    //   - 1-hour activity bitmap ticks for velocity analysis
     //   - 48-slot hourly + 30-slot daily node histograms for velocity
     //   - 90-day TTL matching typical card fraud investigation windows
     s.register_compact_edge_type(
@@ -321,42 +252,12 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         "card",
         "merchant",
         90 * 86_400, // 90-day TTL
-        vec![
-            FlagDef {
-                bit: 0,
-                name: "HIGH_RISK_MERCHANT".into(),
-                description: "MCC in high-risk group: gambling(7995), crypto(6051), wire(4829)"
-                    .into(),
-            },
-            FlagDef {
-                bit: 1,
-                name: "CARD_NOT_PRESENT".into(),
-                description:
-                    "E-commerce or MOTO transaction — no physical card interaction".into(),
-            },
-            FlagDef {
-                bit: 2,
-                name: "CROSS_BORDER".into(),
-                description:
-                    "Merchant country differs from cardholder billing country".into(),
-            },
-            FlagDef {
-                bit: 3,
-                name: "HIGH_VALUE".into(),
-                description: "Single transaction amount ≥ $500".into(),
-            },
-            FlagDef {
-                bit: 4,
-                name: "PREVIOUSLY_DECLINED".into(),
-                description: "Card was declined at this exact merchant in a prior attempt".into(),
-            },
-        ],
         // 7 thresholds → 8 amount bins (USD)
         // bin0:<$5 | bin1:$5-$25 | bin2:$25-$50 | bin3:$50-$100
         // bin4:$100-$250 | bin5:$250-$500 | bin6:$500-$1k | bin7:≥$1k
         vec![5.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0],
         "amount",
-        None,
+        3_600, // 1-hour tick granularity
     )
     .await?;
     println!("  edge type: TRANSACTS_AT");
@@ -371,9 +272,8 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         "device",
         30 * 86_400,
         vec![],
-        vec![],
         "",
-        Some(300), // 5-minute tick granularity
+        300, // 5-minute tick granularity
     )
     .await?;
     println!("  edge type: USES_DEVICE  [activity-bitmap 5m]");
@@ -388,43 +288,23 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         "ip",
         30 * 86_400,
         vec![],
-        vec![],
         "",
-        Some(300),
+        300, // 5-minute tick granularity
     )
     .await?;
     println!("  edge type: USES_IP      [activity-bitmap 5m]");
 
     // ── LINKED_ACCT: Account → Account ──────────────────────────────────────
-    // Money-mule network links with investigation flags.
-    // Permanent TTL — mule rings are investigated long after the fraud window.
+    // Money-mule network links. Permanent TTL — mule rings are investigated long
+    // after the fraud window.
     s.register_compact_edge_type(
         "LINKED_ACCT",
         "account",
         "account",
         0, // permanent
-        vec![
-            FlagDef {
-                bit: 0,
-                name: "MULE_SUSPECTED".into(),
-                description: "Accounts connected in a suspected money-mule funding ring".into(),
-            },
-            FlagDef {
-                bit: 1,
-                name: "SAME_DEVICE".into(),
-                description:
-                    "Both accounts accessed from identical device fingerprint".into(),
-            },
-            FlagDef {
-                bit: 2,
-                name: "SAME_IP".into(),
-                description:
-                    "Both accounts registered or last logged in from the same IP range".into(),
-            },
-        ],
         vec![],
         "",
-        None,
+        3_600, // 1-hour ticks
     )
     .await?;
     println!("  edge type: LINKED_ACCT");
@@ -899,8 +779,8 @@ async fn create_static_edges(client: &Client) -> Result<(), Box<dyn std::error::
 async fn create_transaction_edges(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     // ── TRANSACTS_AT: Card → Merchant ───────────────────────────────────────
     // 15,000 active cards, each with 2–4 merchant relationships.
-    // ~30,000 edges total; amounts and flags vary by merchant risk tier.
-    let mut tx_edges: Vec<(NodeRef, NodeRef, u64, Option<f32>, Option<u32>)> = Vec::with_capacity(30_000);
+    // ~30,000 edges total; amounts vary by merchant risk tier.
+    let mut tx_edges: Vec<(NodeRef, NodeRef, Option<f32>, Option<u32>)> = Vec::with_capacity(30_000);
 
     for card_i in 1u32..=15_000 {
         let mut rng = Rng::new(card_i as u64 + 100_000);
@@ -911,31 +791,21 @@ async fn create_transaction_edges(client: &Client) -> Result<(), Box<dyn std::er
                 NodeRef::external("merchant", &format!("merchant-{merch_i:05}"));
             let card_ref = NodeRef::external("card", &format!("card-{card_i:05}"));
 
-            // Determine flags based on merchant category
             let is_high_risk = merch_i % 14 >= 10; // ~29% of merchants are high-risk MCCs
-            let is_online = rng.pct(40);
-            let is_intl = rng.pct(15);
             let amount: f32 = if is_high_risk {
                 rng.f64_in(10.0, 500.0) as f32
             } else {
                 rng.f64_in(5.0, 300.0) as f32
             };
-            let is_high_val = amount >= 500.0;
-
-            let mut flags = 0u64;
-            if is_high_risk { flags |= TX_HIGH_RISK; }
-            if is_online    { flags |= TX_CNP; }
-            if is_intl      { flags |= TX_INTL; }
-            if is_high_val  { flags |= TX_HIGH_VAL; }
 
             // Spread transactions across last 30 days
             let ts = secs_ago(rng.u32_in(0, 30 * 86_400));
 
-            tx_edges.push((card_ref, merchant_ref, flags, Some(amount), Some(ts)));
+            tx_edges.push((card_ref, merchant_ref, Some(amount), Some(ts)));
         }
     }
     println!("  TRANSACTS_AT: {} edges...", tx_edges.len());
-    bulk_upsert_flagged_edges(client, "TRANSACTS_AT", tx_edges).await?;
+    bulk_upsert_edges(client, "TRANSACTS_AT", tx_edges).await?;
 
     // ── USES_DEVICE: Card → Device ───────────────────────────────────────────
     // 15,000 cards each linked to 1–2 devices (occasionally 3 for high-risk cards)
@@ -980,7 +850,7 @@ async fn create_transaction_edges(client: &Client) -> Result<(), Box<dyn std::er
     // ── LINKED_ACCT: Account → Account ──────────────────────────────────────
     // 5,000 account-to-account suspicious links.
     // Most link low-index accounts to nearby accounts (simulating referral rings).
-    let mut link_edges: Vec<(NodeRef, NodeRef, u64, Option<f32>, Option<u32>)> =
+    let mut link_edges: Vec<(NodeRef, NodeRef, Option<f32>, Option<u32>)> =
         Vec::with_capacity(5_000);
     for i in 0u32..5_000 {
         let mut rng = Rng::new(i as u64 + 400_000);
@@ -989,19 +859,15 @@ async fn create_transaction_edges(client: &Client) -> Result<(), Box<dyn std::er
         if src_i == dst_i {
             continue;
         }
-        let mut flags = 0u64;
-        if rng.pct(30) { flags |= LNK_DEV; }
-        if rng.pct(20) { flags |= LNK_IP; }
         link_edges.push((
             NodeRef::external("account", &format!("account-{src_i:05}")),
             NodeRef::external("account", &format!("account-{dst_i:05}")),
-            flags,
             None,
             None,
         ));
     }
     println!("  LINKED_ACCT: {} edges...", link_edges.len());
-    bulk_upsert_flagged_edges(client, "LINKED_ACCT", link_edges).await?;
+    bulk_upsert_edges(client, "LINKED_ACCT", link_edges).await?;
 
     Ok(())
 }
@@ -1013,30 +879,28 @@ async fn create_transaction_edges(client: &Client) -> Result<(), Box<dyn std::er
 async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     // ── Scenario 1: Card Testing ─────────────────────────────────────────────
     // Fraudster uses a stolen card number to verify it's live by making many
-    // tiny e-commerce transactions ($0.50–$4.99) at different online merchants.
-    // Signal: extreme velocity + all CNP + micro-amounts + many unique merchants.
+    // tiny transactions ($0.50–$4.99) at different merchants.
+    // Signal: extreme velocity + micro-amounts + many unique merchants.
     println!("  [1/5] Card Testing — card-tester-001");
     {
         let card = NodeRef::external("card", "card-tester-001");
         let mut rng = Rng::new(111_111);
         let mut edges = Vec::with_capacity(150);
         for i in 1u32..=150 {
-            // Each transaction at a different online merchant
+            // Each transaction at a different merchant
             let merch_i = i % 14_500 + 1;
             let amount = rng.f64_in(0.50, 4.99) as f32;
             // All within the last 6 hours, in rapid succession
             let ts = hours_ago(6) + (i * 140); // ~2.3 min apart
-            let flags = TX_CNP; // every one is card-not-present
             edges.push((
                 card.clone(),
                 NodeRef::external("merchant", &format!("merchant-{merch_i:05}")),
-                flags,
                 Some(amount),
                 Some(ts),
             ));
         }
-        bulk_upsert_flagged_edges(client, "TRANSACTS_AT", edges).await?;
-        println!("    150 CNP micro-transactions across 150 merchants in 6 hours");
+        bulk_upsert_edges(client, "TRANSACTS_AT", edges).await?;
+        println!("    150 micro-transactions across 150 merchants in 6 hours");
     }
 
     // ── Scenario 2: Account Takeover (ATO) ──────────────────────────────────
@@ -1049,25 +913,24 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
 
         // ── Normal history (past 30 days): low-value domestic purchases
         let normal_merchants = [
-            ("merchant-00001", 42.50_f32, 0u64),  // grocery
-            ("merchant-00002", 18.75_f32, 0),      // coffee / dining
-            ("merchant-00003", 67.00_f32, 0),      // pharmacy
-            ("merchant-00004", 89.50_f32, 0),      // gas station
-            ("merchant-00005", 31.20_f32, 0),      // retail
+            ("merchant-00001", 42.50_f32),  // grocery
+            ("merchant-00002", 18.75_f32),  // coffee / dining
+            ("merchant-00003", 67.00_f32),  // pharmacy
+            ("merchant-00004", 89.50_f32),  // gas station
+            ("merchant-00005", 31.20_f32),  // retail
         ];
         let mut normal_edges = Vec::new();
-        for (days_back, (merch, amount, flags)) in
+        for (days_back, (merch, amount)) in
             (1u32..=30).zip(normal_merchants.iter().cycle()).take(30)
         {
             normal_edges.push((
                 card.clone(),
                 NodeRef::external("merchant", merch),
-                *flags,
                 Some(*amount),
                 Some(days_ago(days_back)),
             ));
         }
-        bulk_upsert_flagged_edges(client, "TRANSACTS_AT", normal_edges).await?;
+        bulk_upsert_edges(client, "TRANSACTS_AT", normal_edges).await?;
 
         // Normal device & IP usage (domestic)
         for h in [72u32, 48, 24, 12] {
@@ -1112,27 +975,26 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
             .await?;
 
         let ato_purchases = [
-            ("merchant-crypto-001", 1_850.00_f32, TX_HIGH_RISK | TX_CNP | TX_INTL | TX_HIGH_VAL),
-            ("merchant-09001",      2_400.00_f32, TX_CNP | TX_INTL | TX_HIGH_VAL),
-            ("merchant-09002",      3_200.00_f32, TX_CNP | TX_INTL | TX_HIGH_VAL),
-            ("merchant-09003",      1_100.00_f32, TX_CNP | TX_INTL | TX_HIGH_VAL),
-            ("merchant-09004",        950.00_f32, TX_CNP | TX_INTL | TX_HIGH_VAL),
-            ("merchant-09005",      2_750.00_f32, TX_HIGH_RISK | TX_CNP | TX_INTL | TX_HIGH_VAL),
-            ("merchant-09006",      1_450.00_f32, TX_CNP | TX_INTL | TX_HIGH_VAL),
-            ("merchant-09007",        800.00_f32, TX_CNP | TX_INTL | TX_HIGH_VAL | TX_DECLINED),
+            ("merchant-crypto-001", 1_850.00_f32),
+            ("merchant-09001",      2_400.00_f32),
+            ("merchant-09002",      3_200.00_f32),
+            ("merchant-09003",      1_100.00_f32),
+            ("merchant-09004",        950.00_f32),
+            ("merchant-09005",      2_750.00_f32),
+            ("merchant-09006",      1_450.00_f32),
+            ("merchant-09007",        800.00_f32),
         ];
         let mut ato_edges = Vec::new();
-        for (i, (merch, amount, flags)) in ato_purchases.iter().enumerate() {
+        for (i, (merch, amount)) in ato_purchases.iter().enumerate() {
             ato_edges.push((
                 card.clone(),
                 NodeRef::external("merchant", merch),
-                *flags,
                 Some(*amount),
                 Some(mins_ago(180 - i as u32 * 20)), // one every 20 mins
             ));
         }
-        bulk_upsert_flagged_edges(client, "TRANSACTS_AT", ato_edges).await?;
-        println!("    30 normal txns + 8 ATO txns ($800–$3,200 intl) from UK IP + rooted device");
+        bulk_upsert_edges(client, "TRANSACTS_AT", ato_edges).await?;
+        println!("    30 normal txns + 8 ATO txns ($800–$3,200) from UK IP + rooted device");
     }
 
     // ── Scenario 3: Device Farm ──────────────────────────────────────────────
@@ -1188,13 +1050,10 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
 
         // Normal domestic transaction 8 minutes ago (still in New York)
         client
-            .graph()
             .upsert_edge(
                 "TRANSACTS_AT",
                 card.clone(),
                 NodeRef::external("merchant", "merchant-00100"),
-                0,
-                0,
                 Some(55.00_f32),
                 Some(mins_ago(8)), // New York, 8 minutes ago
             )
@@ -1212,13 +1071,10 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
             .await?;
 
         client
-            .graph()
             .upsert_edge(
                 "TRANSACTS_AT",
                 card.clone(),
                 NodeRef::external("merchant", "merchant-06001"), // London merchant
-                TX_INTL | TX_CNP,
-                0,
                 Some(320.00_f32),
                 Some(now_secs()),
             )
@@ -1234,29 +1090,23 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
     // Signal: graph traversal via LINKED_ACCT + MULE_SUSPECTED flag.
     println!("  [5/5] Money Mule Chain — account-mule-001 → 002 → 003");
     {
-        // Link: 001 → 002 (same device + mule suspected)
+        // Link: 001 → 002 (suspected mule chain)
         client
-            .graph()
             .upsert_edge(
                 "LINKED_ACCT",
                 NodeRef::external("account", "account-mule-001"),
                 NodeRef::external("account", "account-mule-002"),
-                LNK_MULE | LNK_DEV | LNK_IP,
-                0,
                 None,
                 Some(days_ago(10)),
             )
             .await?;
 
-        // Link: 002 → 003 (mule suspected + same IP range)
+        // Link: 002 → 003 (suspected mule chain)
         client
-            .graph()
             .upsert_edge(
                 "LINKED_ACCT",
                 NodeRef::external("account", "account-mule-002"),
                 NodeRef::external("account", "account-mule-003"),
-                LNK_MULE | LNK_IP,
-                0,
                 None,
                 Some(days_ago(8)),
             )
@@ -1321,23 +1171,20 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     // Q1: Edge State — transaction stats for a specific card↔merchant pair
     //
     // Use case: "How many times has this card transacted here, what's the
-    // cumulative spend, and which fraud flags are currently set?"
+    // cumulative spend, and what does the activity bitmap say?"
     // Answered in O(1) — no table scan, no join.
     // ─────────────────────────────────────────────────────────────────────────
     // card-tester-001 visits merchants via: merch_i = i % 14_500 + 1 (i=1..150)
     // → i=1 → merchant-00002, i=2 → merchant-00003, … merchant-00002 is always hit.
     println!("\n─── Q1: Edge State (card-tester-001 at merchant-00002) ───");
-    println!("    Use case: TX stats & active flags for a specific card↔merchant pair");
+    println!("    Use case: TX stats & activity bitmap for a specific card↔merchant pair");
     let state = client
-        .graph()
         .get_edge_state(
             "TRANSACTS_AT",
             NodeRef::external("card", "card-tester-001"),
             NodeRef::external("merchant", "merchant-00002"),
             None,
             None,
-            None,
-            None, // no activity windows for this edge type
         )
         .await?;
     if let Some(s) = state {
@@ -1347,7 +1194,7 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
             s.approx_sum,
             now_secs().saturating_sub(s.last_seen)
         );
-        println!("    active_flags={:?}", s.active_flag_names);
+        println!("    activity_bitmap=0x{:016x}", s.activity_bitmap_raw);
         println!(
             "    amount_bins: <$5={} $5-25={} $25-50={} $50-100={} $100-250={} $250-500={} $500k-1k={} ≥$1k={}",
             s.bins[0], s.bins[1], s.bins[2], s.bins[3],
@@ -1554,9 +1401,9 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     println!("    card node_id={}", fv.node_id);
     for ef in &fv.edge_features {
         println!(
-            "    edge={:<15} unique_neighbors={:<6} total_tx={:<5} total_spend=${:.2}  flags={:?}",
+            "    edge={:<15} unique_neighbors={:<6} total_tx={:<5} total_spend=${:.2}  bitmap=0x{:016x}",
             ef.edge_type_name, ef.neighbor_count, ef.total_tx_count,
-            ef.total_approx_sum, ef.active_flags
+            ef.total_approx_sum, ef.activity_bitmap_union
         );
     }
     println!("    direct_fraud_score={:.2}  fraudulent_neighbor_count={}  max_neighbor_fraud_score={:.2}",
@@ -1634,10 +1481,7 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         for ((_, label), count) in windows.iter().zip(s.activity_counts.iter()) {
             println!("    [{label}] {count} device interactions");
         }
-        println!(
-            "    active_flags={:?}",
-            s.active_flag_names
-        );
+        println!("    activity_bitmap=0x{:016x}", s.activity_bitmap_raw);
     } else {
         println!("    Edge not found");
     }

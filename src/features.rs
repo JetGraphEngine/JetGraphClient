@@ -86,7 +86,7 @@ impl FeatureClient {
             edge_features: inner.edge_features.into_iter().map(|ef| EdgeTypeFeatures {
                 edge_type_name: ef.edge_type_name,
                 neighbor_count: ef.neighbor_count,
-                active_flags: ef.active_flags,
+                activity_bitmap_union: ef.activity_bitmap_union,
                 total_approx_sum: ef.total_approx_sum,
                 total_tx_count: ef.total_tx_count,
             }).collect(),
@@ -174,7 +174,8 @@ pub struct NodeFeatureVectorResponse {
 pub struct EdgeTypeFeatures {
     pub edge_type_name: String,
     pub neighbor_count: u64,
-    pub active_flags: Vec<String>,
+    /// Union of raw activity bitmap values across all neighbors of this type.
+    pub activity_bitmap_union: u64,
     pub total_approx_sum: f32,
     pub total_tx_count: u32,
 }

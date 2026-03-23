@@ -135,7 +135,7 @@ impl Client {
         numeric_value: Option<f32>,
         event_ts_secs: Option<u32>,
     ) -> Result<UpsertEdgeResult, ClientError> {
-        self.graph().upsert_edge(edge_type, src, dst, 0, 0, numeric_value, event_ts_secs).await
+        self.graph().upsert_edge(edge_type, src, dst, numeric_value, event_ts_secs).await
     }
 
     /// Get edge state, optionally with activity windows for activity-bitmap edge types.

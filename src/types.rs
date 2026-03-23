@@ -67,7 +67,8 @@ pub struct UpsertEdgeResult {
     pub tx_count: u32,
     pub approx_sum: f32,
     pub last_seen: u32,
-    pub active_flag_names: Vec<String>,
+    /// Raw 64-bit activity bitmap value.
+    pub activity_bitmap_raw: u64,
     /// Per-bin transaction counts (8 bins). Each value is a saturating u16 (max 65 535).
     pub bins: [u16; 8],
 }
@@ -79,7 +80,8 @@ pub struct EdgeState {
     pub tx_count: u32,
     pub approx_sum: f32,
     pub last_seen: u32,
-    pub active_flag_names: Vec<String>,
+    /// Raw 64-bit activity bitmap value.
+    pub activity_bitmap_raw: u64,
     /// Per-bin transaction counts (8 bins). Each value is a saturating u16 (max 65 535).
     pub bins: [u16; 8],
     pub filtered_count: u32,

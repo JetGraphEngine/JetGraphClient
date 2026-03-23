@@ -14,15 +14,16 @@ message NodeTypeSpec {
     string name = 1;
 }
 
-// Compact edge type (uses UpsertEdge, one 28-byte payload per unique pair).
+// Compact edge type (uses UpsertEdge, one payload per unique pair).
 message CompactEdgeTypeSpec {
     string name            = 1;
     string from_node_type  = 2;
     string to_node_type    = 3;
     uint64 state_ttl_secs  = 4;  // 0 = permanent
 
-    // Design-time flag bit definitions.
-    repeated FlagDef flag_schema = 5;
+    // Field 5 was flag_schema (removed). Reserved to prevent field number reuse.
+    reserved 5;
+    reserved "flag_schema";
 
     // Schema for interpreting the compact payload (bin boundaries, tracked property).
     optional CompactFieldSchema field_schema = 6;
@@ -30,19 +31,12 @@ message CompactEdgeTypeSpec {
     // Per-node timed histogram configuration.
     optional NodeHistogramConfig node_histogram = 7;
 
-    // Sliding activity bitmap: repurposes the 64-bit flags field as 21 ticks of 3 bits each.
-    // When set, flag_schema is ignored. tick_size_secs defines each tick (e.g. 300 = 5 min).
-    optional ActivityBitmapConfig activity_bitmap = 8;
+    // Mandatory: 21-tick sliding activity bitmap. tick_size_secs defines each tick (e.g. 3600 = 1 hour).
+    ActivityBitmapConfig activity_bitmap = 8;
 }
 
 message ActivityBitmapConfig {
     uint64 tick_size_secs = 1;
-}
-
-message FlagDef {
-    uint32 bit         = 1;  // 0–63
-    string name        = 2;
-    string description = 3;
 }
 
 message CompactFieldSchema {
@@ -90,6 +84,7 @@ message EdgeTypeInfo {
     string from_node_type = 3;
     string to_node_type   = 4;
     uint64 state_ttl_secs = 5;
+    uint64 tick_size_secs = 6;
 }
 
 message PropertyInfo {

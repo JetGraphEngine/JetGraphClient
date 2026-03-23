@@ -171,10 +171,9 @@ message UpsertEdgeRequest {
     string edge_type_name   = 1;
     NodeRef src             = 2;
     NodeRef dst             = 3;
-    // Bit positions to set in the flags field (OR operation).
-    uint64 flag_set_mask    = 4;
-    // Bit positions to clear in the flags field (AND-NOT operation).
-    uint64 flag_clear_mask  = 5;
+    // Fields 4 and 5 were flag_set_mask / flag_clear_mask (removed). Reserved to prevent reuse.
+    reserved 4, 5;
+    reserved "flag_set_mask", "flag_clear_mask";
     // Value of the tracked numeric property (e.g. transaction amount).
     optional float numeric_value = 6;
     // Event timestamp in epoch seconds. If absent, server time is used.
@@ -189,6 +188,7 @@ message UpsertEdgeResponse {
 }
 
 message CompactEdgePayloadProto {
+    // Raw 64-bit activity bitmap value (21 ticks × 3 bits each).
     uint64 flags      = 1;
     // Bin counts 0–7 as 16 bytes: each bin is a little-endian u16, max 65 535.
     // Zeros for slim (non-numeric) edge types.
@@ -197,8 +197,9 @@ message CompactEdgePayloadProto {
     float  approx_sum = 3;
     uint32 tx_count   = 4;
     uint32 last_seen  = 5;
-    // Human-readable names of all currently-set flag bits (from schema).
-    repeated string active_flag_names = 6;
+    // Field 6 was active_flag_names (removed). Reserved to prevent field number reuse.
+    reserved 6;
+    reserved "active_flag_names";
 }
 
 message GetEdgeStateRequest {

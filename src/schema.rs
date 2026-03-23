@@ -28,40 +28,45 @@ impl SchemaClient {
         Ok(r.into_inner().node_type_id)
     }
 
-    /// Register a compact edge type.
+    /// Register a compact edge type. Activity bitmap is mandatory; pass tick_size_secs (e.g. 3600).
     pub async fn register_compact_edge_type(
         &mut self,
         name: &str,
         from_node_type: &str,
         to_node_type: &str,
         state_ttl_secs: u64,
-        flag_schema: Vec<schema_proto::FlagDef>,
         bin_boundaries: Vec<f32>,
         tracked_property: &str,
-        activity_tick_size_secs: Option<u64>,
+        activity_tick_size_secs: u64,
     ) -> Result<u32, ClientError> {
-        let field_schema = schema_proto::CompactFieldSchema {
-            bin_boundaries,
-            tracked_property: tracked_property.to_string(),
+        let field_schema = if !bin_boundaries.is_empty() {
+            Some(schema_proto::CompactFieldSchema {
+                bin_boundaries,
+                tracked_property: tracked_property.to_string(),
+            })
+        } else {
+            None
         };
-        let node_histogram = Some(schema_proto::NodeHistogramConfig {
-            enabled_for_src: true,
-            enabled_for_dst: true,
-            hourly_slots: 48,
-            daily_slots: 30,
-        });
-        let activity_bitmap = activity_tick_size_secs.map(|tick| schema_proto::ActivityBitmapConfig {
-            tick_size_secs: tick,
-        });
+        let node_histogram = if field_schema.is_some() {
+            Some(schema_proto::NodeHistogramConfig {
+                enabled_for_src: true,
+                enabled_for_dst: true,
+                hourly_slots: 48,
+                daily_slots: 30,
+            })
+        } else {
+            None
+        };
         let req = schema_proto::CompactEdgeTypeSpec {
             name: name.to_string(),
             from_node_type: from_node_type.to_string(),
             to_node_type: to_node_type.to_string(),
             state_ttl_secs,
-            flag_schema,
-            field_schema: Some(field_schema),
+            field_schema,
             node_histogram,
-            activity_bitmap,
+            activity_bitmap: Some(schema_proto::ActivityBitmapConfig {
+                tick_size_secs: activity_tick_size_secs,
+            }),
         };
         let r = self.client.register_compact_edge_type(req).await.map_err(ClientError::from)?;
         Ok(r.into_inner().edge_type_id)
@@ -109,6 +114,7 @@ impl SchemaClient {
                 from_node_type: e.from_node_type,
                 to_node_type: e.to_node_type,
                 state_ttl_secs: e.state_ttl_secs,
+                tick_size_secs: e.tick_size_secs,
             }).collect(),
         })
     }
@@ -134,4 +140,6 @@ pub struct EdgeTypeInfo {
     pub from_node_type: String,
     pub to_node_type: String,
     pub state_ttl_secs: u64,
+    /// Seconds per tick for the mandatory activity bitmap on this edge type.
+    pub tick_size_secs: u64,
 }

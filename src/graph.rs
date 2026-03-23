@@ -95,8 +95,6 @@ impl GraphClient {
         edge_type: &str,
         src: NodeRef,
         dst: NodeRef,
-        flag_set_mask: u64,
-        flag_clear_mask: u64,
         numeric_value: Option<f32>,
         event_ts_secs: Option<u32>,
     ) -> Result<UpsertEdgeResult, ClientError> {
@@ -104,8 +102,6 @@ impl GraphClient {
             edge_type_name: edge_type.to_string(),
             src: Some(Self::node_ref_to_proto(&src)),
             dst: Some(Self::node_ref_to_proto(&dst)),
-            flag_set_mask,
-            flag_clear_mask,
             numeric_value,
             event_ts_secs,
         };
@@ -118,7 +114,7 @@ impl GraphClient {
             tx_count: payload.tx_count,
             approx_sum: payload.approx_sum,
             last_seen: payload.last_seen,
-            active_flag_names: payload.active_flag_names,
+            activity_bitmap_raw: payload.flags,
             bins,
         })
     }
@@ -155,7 +151,7 @@ impl GraphClient {
             tx_count: payload.tx_count,
             approx_sum: payload.approx_sum,
             last_seen: payload.last_seen,
-            active_flag_names: payload.active_flag_names,
+            activity_bitmap_raw: payload.flags,
             bins,
             filtered_count: inner.filtered_count,
             filtered_approx_sum: inner.filtered_approx_sum,
