@@ -36,6 +36,46 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! ## Similarity (k-NN SIMILAR_TO edges)
+//!
+//! Register a static edge type (8 B/pair — no activity bitmap, only score + timestamp),
+//! then build or query similarity in real time:
+//!
+//! ```no_run
+//! use fraud_graph_client::{Client, NodeRef};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let mut client = Client::connect("http://localhost:50051").await?;
+//!
+//!     // Register SIMILAR_TO with 24h TTL and minimal 8-byte payload.
+//!     client.register_static_edge_type("SIMILAR_TO", "card", "card", 86400).await?;
+//!     client.schema().finalize().await?;
+//!
+//!     // Batch-build for all card nodes.
+//!     let result = client.build_similarity_graph(
+//!         "card",
+//!         &["TRANSACTS_AT", "USES_DEVICE"],
+//!         10,    // top-k
+//!         0.1,   // min Jaccard
+//!         "SIMILAR_TO",
+//!     ).await?;
+//!     println!("{} edges created in {} ms", result.edges_created, result.elapsed_ms);
+//!
+//!     // Per-node real-time query (no upsert).
+//!     let similar = client.find_similar_nodes(
+//!         NodeRef::external("card", "card-01"),
+//!         &["TRANSACTS_AT"],
+//!         5, 0.1, false, "",
+//!     ).await?;
+//!     for s in &similar.similar_nodes {
+//!         println!("  node {} — jaccard {:.3}", s.node_id, s.similarity);
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
 
 pub mod graph;
 pub mod schema;
@@ -47,7 +87,12 @@ mod error;
 pub use error::ClientError;
 pub use graph::GraphClient;
 pub use schema::SchemaClient;
-pub use features::FeatureClient;
+pub use features::{
+    FeatureClient,
+    SimilarNodeInfo,
+    FindSimilarNodesResult,
+    BuildSimilarityGraphResult,
+};
 pub use health::HealthClient;
 pub use types::*;
 
@@ -162,5 +207,62 @@ impl Client {
         cursor: u64,
     ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
         self.graph().get_neighbors(node, edge_type, out_neighbors, limit, cursor).await
+    }
+
+    // -------------------------------------------------------------------------
+    // Similarity shortcuts
+    // -------------------------------------------------------------------------
+
+    /// Register a static (minimal-payload) edge type for computed edges such as SIMILAR_TO.
+    ///
+    /// Uses an 8-byte payload (f32 score + u32 timestamp per pair). No activity bitmap,
+    /// no bins, no tx_count. `state_ttl_secs` controls automatic TTL expiry (0 = permanent).
+    /// Must be called before `schema().finalize()`.
+    pub async fn register_static_edge_type(
+        &self,
+        name:           &str,
+        from_node_type: &str,
+        to_node_type:   &str,
+        state_ttl_secs: u64,
+    ) -> Result<u32, ClientError> {
+        self.schema().register_static_edge_type(name, from_node_type, to_node_type, state_ttl_secs).await
+    }
+
+    /// Find the top-k most similar nodes to `node` using shared-neighbor Jaccard.
+    ///
+    /// `edge_types` are the edge types used to discover co-neighbors. If `upsert_edges`
+    /// is true, the engine writes SIMILAR_TO edges (must exist with `minimal_payload=true`).
+    pub async fn find_similar_nodes(
+        &self,
+        node:                 NodeRef,
+        edge_types:           &[&str],
+        k:                    u32,
+        min_similarity:       f32,
+        upsert_edges:         bool,
+        similar_to_edge_type: &str,
+    ) -> Result<FindSimilarNodesResult, ClientError> {
+        let mut features = self.features();
+        features.find_similar_nodes(
+            node, edge_types, k, min_similarity, upsert_edges, similar_to_edge_type,
+        ).await
+    }
+
+    /// Batch-build SIMILAR_TO edges for all nodes of `node_type`.
+    ///
+    /// Iterates every node, computes Jaccard similarity via shared neighbors,
+    /// and upserts the top-k results into `similar_to_edge_type` (must be registered
+    /// with `minimal_payload=true`). Runs concurrently with normal graph traffic.
+    pub async fn build_similarity_graph(
+        &self,
+        node_type:            &str,
+        edge_types:           &[&str],
+        k:                    u32,
+        min_similarity:       f32,
+        similar_to_edge_type: &str,
+    ) -> Result<BuildSimilarityGraphResult, ClientError> {
+        let mut features = self.features();
+        features.build_similarity_graph(
+            node_type, edge_types, k, min_similarity, similar_to_edge_type,
+        ).await
     }
 }

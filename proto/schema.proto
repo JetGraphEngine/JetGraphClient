@@ -16,6 +16,7 @@ message NodeTypeSpec {
 
 // Compact edge type (uses UpsertEdge, one payload per unique pair).
 // Slim (16B) when field_schema absent; Full (36B) when field_schema present.
+// Static (8B) when minimal_payload = true.
 message CompactEdgeTypeSpec {
     string name            = 1;
     string from_node_type  = 2;
@@ -33,6 +34,11 @@ message CompactEdgeTypeSpec {
     // Sliding activity bitmap config — always enabled; tick_size_secs sets granularity.
     // Defaults to 3600s (1 hour) if not specified.
     ActivityBitmapConfig activity_bitmap = 8;
+
+    // If true: 8-byte payload (f32 value + u32 last_seen only).
+    // No activity bitmap, no bins, no tx_count. Ignores field_schema if set.
+    // Ideal for computed/derived edges (e.g. SIMILAR_TO). Defaults to false.
+    bool minimal_payload = 9;
 }
 
 message ActivityBitmapConfig {

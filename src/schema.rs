@@ -67,6 +67,7 @@ impl SchemaClient {
             activity_bitmap: Some(schema_proto::ActivityBitmapConfig {
                 tick_size_secs: activity_tick_size_secs,
             }),
+            minimal_payload: false,
         };
         let r = self.client.register_compact_edge_type(req).await.map_err(ClientError::from)?;
         Ok(r.into_inner().edge_type_id)
@@ -88,6 +89,34 @@ impl SchemaClient {
         };
         let r = self.client.register_property(req).await.map_err(ClientError::from)?;
         Ok(r.into_inner().property_id)
+    }
+
+    /// Register a static (minimal) edge type for computed edges (e.g. SIMILAR_TO).
+    ///
+    /// Uses the 8-byte `StaticEdgePayload` (value + last_seen only). No activity bitmap,
+    /// no bins, no tx_count. Ideal for similarity scores or any float-tagged relationship.
+    /// Register with `state_ttl_secs > 0` for automatic TTL-based expiry.
+    pub async fn register_static_edge_type(
+        &mut self,
+        name:            &str,
+        from_node_type:  &str,
+        to_node_type:    &str,
+        state_ttl_secs:  u64,
+    ) -> Result<u32, ClientError> {
+        let req = schema_proto::CompactEdgeTypeSpec {
+            name: name.to_string(),
+            from_node_type: from_node_type.to_string(),
+            to_node_type: to_node_type.to_string(),
+            state_ttl_secs,
+            field_schema: None,
+            node_histogram: None,
+            activity_bitmap: Some(schema_proto::ActivityBitmapConfig {
+                tick_size_secs: 3600,
+            }),
+            minimal_payload: true,
+        };
+        let r = self.client.register_compact_edge_type(req).await.map_err(ClientError::from)?;
+        Ok(r.into_inner().edge_type_id)
     }
 
     /// Finalize the schema. Call after all types are registered.

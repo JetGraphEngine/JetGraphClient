@@ -61,28 +61,40 @@ pub struct CreateNodeResult {
 }
 
 /// Result of an upsert edge call.
+///
+/// For static (minimal-payload) edges such as SIMILAR_TO:
+/// - `approx_sum` carries the stored float value (e.g. the Jaccard score).
+/// - `tx_count` is always 1 (no accumulation).
+/// - `activity_bitmap_raw` and `bins` are always 0.
 #[derive(Debug, Clone)]
 pub struct UpsertEdgeResult {
     pub created_new: bool,
     pub tx_count: u32,
+    /// For static edges this holds the stored float value (e.g. Jaccard score).
     pub approx_sum: f32,
     pub last_seen: u32,
-    /// Raw 64-bit activity bitmap value.
+    /// Raw 64-bit activity bitmap value. Always 0 for static edge types.
     pub activity_bitmap_raw: u64,
-    /// Per-bin transaction counts (8 bins). Each value is a saturating u16 (max 65 535).
+    /// Per-bin transaction counts (8 bins). Always [0; 8] for static edge types.
     pub bins: [u16; 8],
 }
 
 /// Edge state from GetEdgeState.
+///
+/// For static (minimal-payload) edges such as SIMILAR_TO:
+/// - `approx_sum` holds the stored float value (e.g. the Jaccard similarity score).
+/// - `tx_count` is always 1.
+/// - `activity_bitmap_raw` and `bins` are always 0.
 #[derive(Debug, Clone)]
 pub struct EdgeState {
     pub found: bool,
     pub tx_count: u32,
+    /// For static edges this holds the stored float value (e.g. Jaccard score).
     pub approx_sum: f32,
     pub last_seen: u32,
-    /// Raw 64-bit activity bitmap value.
+    /// Raw 64-bit activity bitmap value. Always 0 for static edge types.
     pub activity_bitmap_raw: u64,
-    /// Per-bin transaction counts (8 bins). Each value is a saturating u16 (max 65 535).
+    /// Per-bin transaction counts (8 bins). Always [0; 8] for static edge types.
     pub bins: [u16; 8],
     pub filtered_count: u32,
     pub filtered_approx_sum: f32,

@@ -152,6 +152,70 @@ impl FeatureClient {
         self.client.unflag_node(req).await.map_err(ClientError::from)?;
         Ok(())
     }
+
+    /// Find the top-k most similar nodes to `node` using shared-neighbor Jaccard.
+    ///
+    /// `edge_types` determines which edge types are used to discover co-neighbors.
+    /// If `upsert_edges` is true, the engine will write SIMILAR_TO edges with the
+    /// Jaccard score into `similar_to_edge_type` (must exist with minimal_payload=true).
+    pub async fn find_similar_nodes(
+        &mut self,
+        node:                 NodeRef,
+        edge_types:           &[&str],
+        k:                    u32,
+        min_similarity:       f32,
+        upsert_edges:         bool,
+        similar_to_edge_type: &str,
+    ) -> Result<FindSimilarNodesResult, ClientError> {
+        let req = features_proto::FindSimilarNodesRequest {
+            node: Some(node_ref_to_proto(&node)),
+            edge_types: edge_types.iter().map(|s| (*s).to_string()).collect(),
+            k,
+            min_similarity,
+            upsert_edges,
+            similar_to_edge_type: similar_to_edge_type.to_string(),
+        };
+        let r = self.client.find_similar_nodes(req).await.map_err(ClientError::from)?;
+        let inner = r.into_inner();
+        Ok(FindSimilarNodesResult {
+            query_node_id: inner.query_node_id,
+            similar_nodes: inner.similar_nodes.into_iter().map(|sn| SimilarNodeInfo {
+                node_id:          sn.node_id,
+                similarity:       sn.similarity,
+                shared_neighbors: sn.shared_neighbors,
+            }).collect(),
+        })
+    }
+
+    /// Batch-build SIMILAR_TO edges for all nodes of `node_type`.
+    ///
+    /// Iterates every node of the given type, computes Jaccard similarity against
+    /// co-neighbors, and upserts the top-k results as edges of `similar_to_edge_type`
+    /// (must be registered with minimal_payload=true).
+    pub async fn build_similarity_graph(
+        &mut self,
+        node_type:            &str,
+        edge_types:           &[&str],
+        k:                    u32,
+        min_similarity:       f32,
+        similar_to_edge_type: &str,
+    ) -> Result<BuildSimilarityGraphResult, ClientError> {
+        let req = features_proto::BuildSimilarityGraphRequest {
+            node_type:            node_type.to_string(),
+            edge_types:           edge_types.iter().map(|s| (*s).to_string()).collect(),
+            k,
+            min_similarity,
+            similar_to_edge_type: similar_to_edge_type.to_string(),
+        };
+        let r = self.client.build_similarity_graph(req).await.map_err(ClientError::from)?;
+        let inner = r.into_inner();
+        Ok(BuildSimilarityGraphResult {
+            nodes_processed: inner.nodes_processed,
+            edges_created:   inner.edges_created,
+            edges_updated:   inner.edges_updated,
+            elapsed_ms:      inner.elapsed_ms,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -190,4 +254,25 @@ pub struct NodeFraudInfo {
 #[derive(Debug, Clone)]
 pub struct FraudContext {
     pub flagged_nodes: Vec<NodeFraudInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SimilarNodeInfo {
+    pub node_id:          u64,
+    pub similarity:       f32,
+    pub shared_neighbors: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct FindSimilarNodesResult {
+    pub query_node_id: u64,
+    pub similar_nodes: Vec<SimilarNodeInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BuildSimilarityGraphResult {
+    pub nodes_processed: u64,
+    pub edges_created:   u64,
+    pub edges_updated:   u64,
+    pub elapsed_ms:      u64,
 }

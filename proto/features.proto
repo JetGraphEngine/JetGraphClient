@@ -9,6 +9,10 @@ service FeatureService {
     rpc QueryNodeHistogram   (NodeHistogramQuery)       returns (NodeHistogramResult);
     // Combined scoring feature vector for a node across multiple edge types.
     rpc GetNodeFeatureVector (NodeFeatureVectorRequest) returns (NodeFeatureVectorResponse);
+    // k-NN similarity: find top-k most similar nodes (shared-neighbor Jaccard).
+    rpc FindSimilarNodes     (FindSimilarNodesRequest)     returns (FindSimilarNodesResponse);
+    // Batch k-NN: build SIMILAR_TO edges for all nodes of a given type.
+    rpc BuildSimilarityGraph (BuildSimilarityGraphRequest) returns (BuildSimilarityGraphResponse);
 }
 
 message NodeRef {
@@ -203,4 +207,60 @@ message NodeFeatureVectorResponse {
     float  direct_fraud_score             = 3;
     uint32 fraudulent_neighbor_count      = 4;
     float  max_neighbor_fraud_score       = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Similarity RPCs
+// ---------------------------------------------------------------------------
+
+// Find the top-k most similar nodes to a given node using shared-neighbor Jaccard.
+// Optionally upsert the results as SIMILAR_TO edges (requires similar_to_edge_type
+// to be registered with minimal_payload = true).
+message FindSimilarNodesRequest {
+    // The query node.
+    NodeRef         node                 = 1;
+    // Which edge types to use when computing shared neighbors.
+    repeated string edge_types           = 2;
+    // Maximum number of similar nodes to return (default 10).
+    uint32          k                    = 3;
+    // Minimum Jaccard score (0.0–1.0) required to include a candidate.
+    float           min_similarity       = 4;
+    // If true, upsert a SIMILAR_TO edge for each result with value = Jaccard score.
+    bool            upsert_edges         = 5;
+    // Edge type name to upsert (required when upsert_edges = true).
+    string          similar_to_edge_type = 6;
+}
+
+message SimilarNode {
+    uint64 node_id          = 1;
+    float  similarity       = 2;
+    uint32 shared_neighbors = 3;
+}
+
+message FindSimilarNodesResponse {
+    uint64               query_node_id = 1;
+    repeated SimilarNode similar_nodes = 2;
+}
+
+// Batch-build SIMILAR_TO edges for all nodes of a given type.
+// Iterates every node of node_type and computes Jaccard similarity against
+// its co-neighbors, upserting top-k results as SIMILAR_TO edges.
+message BuildSimilarityGraphRequest {
+    // Node type to iterate over.
+    string          node_type            = 1;
+    // Edge types used to discover shared neighbors.
+    repeated string edge_types           = 2;
+    // Maximum similar nodes to link per node.
+    uint32          k                    = 3;
+    // Minimum Jaccard score to create an edge.
+    float           min_similarity       = 4;
+    // Edge type name for the SIMILAR_TO edges (must exist with minimal_payload = true).
+    string          similar_to_edge_type = 5;
+}
+
+message BuildSimilarityGraphResponse {
+    uint64 nodes_processed = 1;
+    uint64 edges_created   = 2;
+    uint64 edges_updated   = 3;
+    uint64 elapsed_ms      = 4;
 }
