@@ -196,8 +196,12 @@ impl Client {
     }
 
     /// Get neighbors of a node.
-    /// `limit` 0 = unlimited. `cursor` = neighbor_node_id after which to resume (0 = start).
-    /// Returns (edges, has_more).
+    ///
+    /// - `limit` 0 = unlimited. `cursor` = neighbor_node_id after which to resume (0 = start).
+    /// - `neighbor_filters`: server-side predicates on neighbour node properties; pass `&[]` for unfiltered.
+    /// - `include_props`: when true, populate `NeighborEdge::neighbor_props` with all node properties.
+    ///
+    /// Returns `(edges, has_more)`.
     pub async fn get_neighbors(
         &self,
         node: NodeRef,
@@ -205,8 +209,12 @@ impl Client {
         out_neighbors: bool,
         limit: u32,
         cursor: u64,
+        neighbor_filters: &[NodePropertyFilter],
+        include_props: bool,
     ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
-        self.graph().get_neighbors(node, edge_type, out_neighbors, limit, cursor).await
+        self.graph().get_neighbors(
+            node, edge_type, out_neighbors, limit, cursor, neighbor_filters, include_props,
+        ).await
     }
 
     // -------------------------------------------------------------------------

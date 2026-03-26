@@ -1220,6 +1220,8 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
             true,  // out-neighbors (merchants this card transacted at)
             10,    // page size — show first 10
             0,     // cursor: start from the beginning
+            &[],   // no property filters
+            false, // don't include neighbour properties
         )
         .await?;
     println!("    First page ({} merchants shown):", neighbors.len());
@@ -1233,6 +1235,45 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         "    has_more={} — use cursor to paginate through all merchants",
         has_more
     );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Q2b: Filtered Neighbors — node property predicates + enriched response
+    //
+    // Use case: "Which cards purchased from this merchant have a credit limit
+    // greater than 1000?  Return their properties so we can reason about risk."
+    //
+    // The filter is applied server-side (zero serde overhead per neighbour in
+    // the hot path) and the enriched properties are returned in one round-trip.
+    // ─────────────────────────────────────────────────────────────────────────
+    println!("\n─── Q2b: Filtered Neighbors — cards with limit > 1000 at this merchant ───");
+    println!("    Use case: Server-side node-property filtering + enriched response");
+    // Pick the first merchant from the previous result as our subject.
+    if let Some(first_merchant) = neighbors.first() {
+        let filters = vec![NodePropertyFilter::int_gt("limit", 1000)];
+        let (filtered, _) = client
+            .get_neighbors(
+                NodeRef::NodeId(first_merchant.neighbor_node_id),
+                "TRANSACTS_AT",
+                false,   // in-neighbors = cards that purchased from this merchant
+                50,      // page size
+                0,       // cursor: start
+                &filters,
+                true,    // include neighbour (card) properties in response
+            )
+            .await?;
+        println!("    Cards with limit > 1000 purchasing from merchant {} ({} found):",
+            first_merchant.neighbor_node_id, filtered.len());
+        for n in &filtered {
+            print!("      card={}", n.neighbor_node_id);
+            if let Some(ext) = &n.neighbor_external_id {
+                print!(" ({})", ext);
+            }
+            for prop in &n.neighbor_props {
+                print!("  {}={:?}", prop.name, prop.value);
+            }
+            println!();
+        }
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Q3: Neighbor Count — unique merchant velocity check

@@ -87,11 +87,15 @@ message EdgeFilter {
 message PropertyPredicate {
     string property_name = 1;
     oneof predicate {
-        int64  int_gt   = 2;
-        int64  int_lt   = 3;
-        int64  int_eq   = 4;
+        int64  int_gt    = 2;
+        int64  int_lt    = 3;
+        int64  int_eq    = 4;
         int64  ts_after  = 5;
         int64  ts_before = 6;
+        double float_gt  = 7;
+        double float_lt  = 8;
+        string string_eq = 9;
+        bool   bool_eq   = 10;
     }
 }
 
@@ -102,13 +106,20 @@ message NeighborQuery {
     optional EdgeFilter filter       = 4;
     uint32             limit         = 5;   // 0 = unlimited (default)
     uint64             cursor        = 6;   // neighbor_node_id after which to resume; 0 = start
+    // Filter on neighbor node properties (applied server-side before returning results).
+    repeated PropertyPredicate neighbor_filters = 7;
+    // When true, include neighbor node properties in the response.
+    bool               include_neighbor_props = 8;
 }
 
 message NeighborEdge {
     uint64 neighbor_node_id = 1;
     uint64 edge_id          = 2;
     int64  created_at_us    = 3;
-    repeated PropertyEntry edge_props = 4;
+    repeated PropertyEntry edge_props         = 4;
+    string                 neighbor_node_type = 5;
+    optional string        neighbor_external_id = 6;
+    repeated PropertyEntry neighbor_props     = 7;
 }
 
 message NeighborResponse {

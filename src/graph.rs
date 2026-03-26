@@ -1,7 +1,7 @@
 //! Graph service client: nodes, edges, neighbors.
 
 use tonic::transport::Channel;
-use crate::{ClientError, NodeRef, PropertyEntry, PropertyValue, UpsertEdgeResult, EdgeState, NeighborEdge, CreateNodeResult};
+use crate::{ClientError, NodeRef, PropertyEntry, PropertyValue, UpsertEdgeResult, EdgeState, NeighborEdge, CreateNodeResult, NodePropertyFilter, NodePropPredicate};
 
 pub mod graph_proto {
     tonic::include_proto!("graph");
@@ -160,7 +160,10 @@ impl GraphClient {
     }
 
     /// Get neighbors of a node.
-    /// `limit` 0 = unlimited. `cursor` = neighbor_node_id after which to resume (0 = start).
+    ///
+    /// - `limit` 0 = unlimited. `cursor` = neighbor_node_id after which to resume (0 = start).
+    /// - `neighbor_filters`: server-side predicates on neighbour node properties; pass `&[]` for unfiltered.
+    /// - `include_props`: when true, populate `NeighborEdge::neighbor_props` with all node properties.
     pub async fn get_neighbors(
         &self,
         node: NodeRef,
@@ -168,7 +171,10 @@ impl GraphClient {
         out_neighbors: bool,
         limit: u32,
         cursor: u64,
+        neighbor_filters: &[NodePropertyFilter],
+        include_props: bool,
     ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
+        let proto_filters = neighbor_filters.iter().map(Self::filter_to_proto).collect();
         let req = graph_proto::NeighborQuery {
             node: Some(Self::node_ref_to_proto(&node)),
             edge_type: edge_type.to_string(),
@@ -176,18 +182,55 @@ impl GraphClient {
             filter: None,
             limit,
             cursor,
+            neighbor_filters: proto_filters,
+            include_neighbor_props: include_props,
         };
         let r = self.client.clone().get_neighbors(req).await.map_err(ClientError::from)?;
         let inner = r.into_inner();
         let edges: Vec<NeighborEdge> = inner.edges
             .into_iter()
-            .map(|e| NeighborEdge {
-                neighbor_node_id: e.neighbor_node_id,
-                edge_id: e.edge_id,
-                created_at_us: e.created_at_us,
+            .map(|e| {
+                let neighbor_props = e.neighbor_props.into_iter().map(|p| {
+                    let value = match p.value.and_then(|v| v.value) {
+                        Some(graph_proto::property_value::Value::IntVal(x))       => PropertyValue::Int(x),
+                        Some(graph_proto::property_value::Value::FloatVal(x))     => PropertyValue::Float(x),
+                        Some(graph_proto::property_value::Value::StringVal(x))    => PropertyValue::String(x),
+                        Some(graph_proto::property_value::Value::BoolVal(x))      => PropertyValue::Bool(x),
+                        Some(graph_proto::property_value::Value::TimestampVal(x)) => PropertyValue::Timestamp(x),
+                        _ => PropertyValue::Int(0),
+                    };
+                    PropertyEntry { name: p.name, value }
+                }).collect();
+                NeighborEdge {
+                    neighbor_node_id:     e.neighbor_node_id,
+                    edge_id:              e.edge_id,
+                    created_at_us:        e.created_at_us,
+                    neighbor_node_type:   e.neighbor_node_type,
+                    neighbor_external_id: e.neighbor_external_id,
+                    neighbor_props,
+                }
             })
             .collect();
         Ok((edges, inner.has_more))
+    }
+
+    fn filter_to_proto(f: &NodePropertyFilter) -> graph_proto::PropertyPredicate {
+        use graph_proto::property_predicate::Predicate;
+        let predicate = Some(match &f.predicate {
+            NodePropPredicate::IntGt(v)    => Predicate::IntGt(*v),
+            NodePropPredicate::IntLt(v)    => Predicate::IntLt(*v),
+            NodePropPredicate::IntEq(v)    => Predicate::IntEq(*v),
+            NodePropPredicate::FloatGt(v)  => Predicate::FloatGt(*v),
+            NodePropPredicate::FloatLt(v)  => Predicate::FloatLt(*v),
+            NodePropPredicate::TsAfter(v)  => Predicate::TsAfter(*v),
+            NodePropPredicate::TsBefore(v) => Predicate::TsBefore(*v),
+            NodePropPredicate::StringEq(v) => Predicate::StringEq(v.clone()),
+            NodePropPredicate::BoolEq(v)   => Predicate::BoolEq(*v),
+        });
+        graph_proto::PropertyPredicate {
+            property_name: f.property.clone(),
+            predicate,
+        }
     }
 
     /// Get exact neighbor count.
