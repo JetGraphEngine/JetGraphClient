@@ -39,6 +39,12 @@ message CompactEdgeTypeSpec {
     // No activity bitmap, no bins, no tx_count. Ignores field_schema if set.
     // Ideal for computed/derived edges (e.g. SIMILAR_TO). Defaults to false.
     bool minimal_payload = 9;
+
+    // Optional single boolean property name for this edge type.
+    // When set, bit 63 of the flags field stores the boolean value — zero extra memory.
+    // Cannot be used with minimal_payload = true (static edge types have no flags field).
+    // Empty string = no boolean property.
+    string bool_property = 10;
 }
 
 message ActivityBitmapConfig {
@@ -92,6 +98,8 @@ message EdgeTypeInfo {
     uint64 state_ttl_secs = 5;
     // Seconds per tick for the mandatory 21-tick activity bitmap on this edge type.
     uint64 tick_size_secs = 6;
+    // The name of the single boolean property stored in bit 63 of flags, or empty if none.
+    string bool_property  = 7;
 }
 
 message PropertyInfo {

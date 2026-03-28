@@ -73,10 +73,13 @@ pub struct UpsertEdgeResult {
     /// For static edges this holds the stored float value (e.g. Jaccard score).
     pub approx_sum: f32,
     pub last_seen: u32,
-    /// Raw 64-bit activity bitmap value. Always 0 for static edge types.
+    /// Raw 64-bit activity bitmap value (bits 0-62). Always 0 for static edge types.
     pub activity_bitmap_raw: u64,
     /// Per-bin transaction counts (8 bins). Always [0; 8] for static edge types.
     pub bins: [u16; 8],
+    /// Value of the edge type's single boolean property (bit 63 of internal flags).
+    /// `None` when the edge type has no bool_property defined in its schema.
+    pub bool_flag: Option<bool>,
 }
 
 /// Edge state from GetEdgeState.
@@ -92,13 +95,16 @@ pub struct EdgeState {
     /// For static edges this holds the stored float value (e.g. Jaccard score).
     pub approx_sum: f32,
     pub last_seen: u32,
-    /// Raw 64-bit activity bitmap value. Always 0 for static edge types.
+    /// Raw 64-bit activity bitmap value (bits 0-62). Always 0 for static edge types.
     pub activity_bitmap_raw: u64,
     /// Per-bin transaction counts (8 bins). Always [0; 8] for static edge types.
     pub bins: [u16; 8],
     pub filtered_count: u32,
     pub filtered_approx_sum: f32,
     pub activity_counts: Vec<u32>,
+    /// Value of the edge type's single boolean property (bit 63 of internal flags).
+    /// `None` when the edge type has no bool_property defined in its schema.
+    pub bool_flag: Option<bool>,
 }
 
 /// A neighbor edge from GetNeighbors.

@@ -29,6 +29,10 @@ impl SchemaClient {
     }
 
     /// Register a compact edge type. Activity bitmap is mandatory; pass tick_size_secs (e.g. 3600).
+    ///
+    /// `bool_property_name`: optional name for the single boolean property stored in bit 63 of
+    /// the activity flags field. Pass `None` (or `Some("")`) for no boolean property. Cannot be
+    /// combined with static edge types (`minimal_payload = true`).
     pub async fn register_compact_edge_type(
         &mut self,
         name: &str,
@@ -38,6 +42,7 @@ impl SchemaClient {
         bin_boundaries: Vec<f32>,
         tracked_property: &str,
         activity_tick_size_secs: u64,
+        bool_property_name: Option<&str>,
     ) -> Result<u32, ClientError> {
         let field_schema = if !bin_boundaries.is_empty() {
             Some(schema_proto::CompactFieldSchema {
@@ -68,6 +73,7 @@ impl SchemaClient {
                 tick_size_secs: activity_tick_size_secs,
             }),
             minimal_payload: false,
+            bool_property: bool_property_name.unwrap_or("").to_string(),
         };
         let r = self.client.register_compact_edge_type(req).await.map_err(ClientError::from)?;
         Ok(r.into_inner().edge_type_id)
@@ -114,6 +120,7 @@ impl SchemaClient {
                 tick_size_secs: 3600,
             }),
             minimal_payload: true,
+            bool_property: String::new(), // static edge types cannot have a bool property
         };
         let r = self.client.register_compact_edge_type(req).await.map_err(ClientError::from)?;
         Ok(r.into_inner().edge_type_id)
@@ -144,6 +151,7 @@ impl SchemaClient {
                 to_node_type: e.to_node_type,
                 state_ttl_secs: e.state_ttl_secs,
                 tick_size_secs: e.tick_size_secs,
+                bool_property: if e.bool_property.is_empty() { None } else { Some(e.bool_property) },
             }).collect(),
         })
     }
@@ -171,4 +179,7 @@ pub struct EdgeTypeInfo {
     pub state_ttl_secs: u64,
     /// Seconds per tick for the mandatory activity bitmap on this edge type.
     pub tick_size_secs: u64,
+    /// Name of the single boolean property stored in bit 63 of the flags field.
+    /// `None` when this edge type has no boolean property defined.
+    pub bool_property: Option<String>,
 }

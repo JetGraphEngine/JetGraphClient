@@ -170,7 +170,7 @@ async fn bulk_upsert_edges(
         let et2 = et.clone();
         let permit = sem.clone().acquire_owned().await.unwrap();
         handles.push(tokio::spawn(async move {
-            let r = c.upsert_edge(&et2, src, dst, val, ts).await;
+            let r = c.upsert_edge(&et2, src, dst, val, ts, None).await;
             drop(permit);
             r
         }));
@@ -236,7 +236,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         ("HAS_CARD", "account", "card"),
         ("CARD_TO_BIN", "card", "bin"),
     ] {
-        s.register_compact_edge_type(name, from, to, 0, vec![], "", 3_600)
+        s.register_compact_edge_type(name, from, to, 0, vec![], "", 3_600, None)
             .await?;
         println!("  edge type: {name}");
     }
@@ -258,6 +258,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         vec![5.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0],
         "amount",
         3_600, // 1-hour tick granularity
+        None,
     )
     .await?;
     println!("  edge type: TRANSACTS_AT");
@@ -274,6 +275,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         vec![],
         "",
         300, // 5-minute tick granularity
+        None,
     )
     .await?;
     println!("  edge type: USES_DEVICE  [activity-bitmap 5m]");
@@ -290,6 +292,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         vec![],
         "",
         300, // 5-minute tick granularity
+        None,
     )
     .await?;
     println!("  edge type: USES_IP      [activity-bitmap 5m]");
@@ -305,6 +308,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         vec![],
         "",
         3_600, // 1-hour ticks
+        None,
     )
     .await?;
     println!("  edge type: LINKED_ACCT");
@@ -941,6 +945,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                     NodeRef::external("device", "device-00001"),
                     None,
                     Some(hours_ago(h)),
+                    None,
                 )
                 .await?;
             client
@@ -950,6 +955,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                     NodeRef::external("ip", "ip-00001"), // US IP
                     None,
                     Some(hours_ago(h)),
+                    None,
                 )
                 .await?;
         }
@@ -962,6 +968,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                 NodeRef::external("device", "device-farm-001"), // NEW rooted device
                 None,
                 Some(hours_ago(3)),
+                None,
             )
             .await?;
         client
@@ -971,6 +978,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                 NodeRef::external("ip", "ip-uk-001"), // NEW UK IP
                 None,
                 Some(hours_ago(3)),
+                None,
             )
             .await?;
 
@@ -1034,6 +1042,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                     NodeRef::external("ip", "ip-ny-001"),
                     None,
                     Some(hours_ago(h)),
+                    None,
                 )
                 .await?;
         }
@@ -1045,6 +1054,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                 NodeRef::external("ip", "ip-ny-001"),
                 None,
                 Some(mins_ago(8)),
+                None,
             )
             .await?;
 
@@ -1056,6 +1066,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                 NodeRef::external("merchant", "merchant-00100"),
                 Some(55.00_f32),
                 Some(mins_ago(8)), // New York, 8 minutes ago
+                None,
             )
             .await?;
 
@@ -1067,6 +1078,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                 NodeRef::external("ip", "ip-uk-001"),
                 None,
                 Some(now_secs()),
+                None,
             )
             .await?;
 
@@ -1077,6 +1089,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                 NodeRef::external("merchant", "merchant-06001"), // London merchant
                 Some(320.00_f32),
                 Some(now_secs()),
+                None,
             )
             .await?;
 
@@ -1098,6 +1111,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                 NodeRef::external("account", "account-mule-002"),
                 None,
                 Some(days_ago(10)),
+                None,
             )
             .await?;
 
@@ -1109,6 +1123,7 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                 NodeRef::external("account", "account-mule-003"),
                 None,
                 Some(days_ago(8)),
+                None,
             )
             .await?;
 

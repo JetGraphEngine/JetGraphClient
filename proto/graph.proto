@@ -187,6 +187,9 @@ message UpsertEdgeRequest {
     optional float numeric_value  = 6;
     // Event timestamp in epoch seconds. If absent, server time is used.
     optional uint32 event_ts_secs = 7;
+    // Value of the edge-type's single boolean property (bit 63 of flags).
+    // Ignored if the edge type has no bool_property defined in its schema.
+    optional bool bool_property_value = 8;
 }
 
 message UpsertEdgeResponse {
@@ -197,7 +200,7 @@ message UpsertEdgeResponse {
 }
 
 message CompactEdgePayloadProto {
-    // Activity bitmap raw value (21 ticks × 3 bits = 63 bits, LSB = most recent tick).
+    // Activity bitmap raw value (bits 0-62 only; bit 63 is separated into bool_flag below).
     uint64 flags      = 1;
     // Bin counts 0–7 as 16 bytes: each bin is a little-endian u16, max 65 535.
     // Zeros for slim (non-numeric) edge types.
@@ -207,6 +210,9 @@ message CompactEdgePayloadProto {
     uint32 tx_count   = 4;
     uint32 last_seen  = 5;
     reserved 6;  // formerly: repeated string active_flag_names
+    // The value of the edge-type's single boolean property (bit 63 of internal flags).
+    // Present only when the edge type has a bool_property defined in its schema.
+    optional bool bool_flag = 7;
 }
 
 message GetEdgeStateRequest {

@@ -90,6 +90,9 @@ impl GraphClient {
     }
 
     /// Upsert a compact edge.
+    ///
+    /// `bool_property_value`: when the edge type has a boolean property registered (bit 63 of
+    /// flags), pass `Some(true/false)` to set it. Pass `None` to leave it unchanged.
     pub async fn upsert_edge(
         &self,
         edge_type: &str,
@@ -97,6 +100,7 @@ impl GraphClient {
         dst: NodeRef,
         numeric_value: Option<f32>,
         event_ts_secs: Option<u32>,
+        bool_property_value: Option<bool>,
     ) -> Result<UpsertEdgeResult, ClientError> {
         let req = graph_proto::UpsertEdgeRequest {
             edge_type_name: edge_type.to_string(),
@@ -104,6 +108,7 @@ impl GraphClient {
             dst: Some(Self::node_ref_to_proto(&dst)),
             numeric_value,
             event_ts_secs,
+            bool_property_value,
         };
         let r = self.client.clone().upsert_edge(req).await.map_err(ClientError::from)?;
         let inner = r.into_inner();
@@ -116,6 +121,7 @@ impl GraphClient {
             last_seen: payload.last_seen,
             activity_bitmap_raw: payload.flags,
             bins,
+            bool_flag: payload.bool_flag,
         })
     }
 
@@ -156,6 +162,7 @@ impl GraphClient {
             filtered_count: inner.filtered_count,
             filtered_approx_sum: inner.filtered_approx_sum,
             activity_counts: inner.activity_counts,
+            bool_flag: payload.bool_flag,
         }))
     }
 
