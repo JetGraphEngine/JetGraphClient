@@ -1,5 +1,32 @@
 //! Convenience types for the client API.
 
+/// An edge type with a caller-supplied weight for weighted similarity scoring.
+///
+/// The engine normalises internally — weights do not need to sum to 1.0.
+/// Matching on more (or more heavily weighted) edge types always increases the score.
+///
+/// # Example
+/// ```
+/// use fraud_graph_client::EdgeTypeWeight;
+/// let weights = vec![
+///     EdgeTypeWeight::new("TRANSACTS_AT", 0.5),
+///     EdgeTypeWeight::new("USES_DEVICE",  0.3),
+///     EdgeTypeWeight::new("USES_IP",      0.2),
+/// ];
+/// ```
+#[derive(Debug, Clone)]
+pub struct EdgeTypeWeight {
+    pub edge_type: String,
+    pub weight:    f32,
+}
+
+impl EdgeTypeWeight {
+    /// Convenience constructor.
+    pub fn new(edge_type: impl Into<String>, weight: f32) -> Self {
+        Self { edge_type: edge_type.into(), weight }
+    }
+}
+
 /// Reference to a node: either by NodeId or by external (type, id).
 #[derive(Debug, Clone)]
 pub enum NodeRef {

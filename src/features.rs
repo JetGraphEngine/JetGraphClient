@@ -1,7 +1,7 @@
 //! Feature service client: histograms, fraud context, flagging.
 
 use tonic::transport::Channel;
-use crate::{ClientError, NodeRef};
+use crate::{ClientError, EdgeTypeWeight, NodeRef};
 
 pub mod features_proto {
     tonic::include_proto!("features");
@@ -153,15 +153,23 @@ impl FeatureClient {
         Ok(())
     }
 
-    /// Find the top-k most similar nodes to `node` using shared-neighbor Jaccard.
+    /// Find the top-k most similar nodes to `node` using weighted per-type Jaccard.
     ///
-    /// `edge_types` determines which edge types are used to discover co-neighbors.
-    /// If `upsert_edges` is true, the engine will write SIMILAR_TO edges with the
-    /// Jaccard score into `similar_to_edge_type` (must exist with minimal_payload=true).
+    /// Each entry in `weighted_edge_types` specifies an edge type and its relative
+    /// importance. The engine normalises internally; weights need not sum to 1.0.
+    /// Matching on more (or more heavily weighted) types always increases the score.
+    ///
+    /// `required_edge_types`: names of edge types that must produce a non-zero
+    /// per-type Jaccard score for a candidate to be returned. Pass `&[]` for
+    /// no hard constraints (any score ≥ `min_similarity` is accepted).
+    ///
+    /// If `upsert_edges` is true, the engine writes SIMILAR_TO edges with the
+    /// weighted score into `similar_to_edge_type` (must exist with minimal_payload=true).
     pub async fn find_similar_nodes(
         &mut self,
         node:                 NodeRef,
-        edge_types:           &[&str],
+        weighted_edge_types:  &[EdgeTypeWeight],
+        required_edge_types:  &[&str],
         k:                    u32,
         min_similarity:       f32,
         upsert_edges:         bool,
@@ -169,7 +177,14 @@ impl FeatureClient {
     ) -> Result<FindSimilarNodesResult, ClientError> {
         let req = features_proto::FindSimilarNodesRequest {
             node: Some(node_ref_to_proto(&node)),
-            edge_types: edge_types.iter().map(|s| (*s).to_string()).collect(),
+            weighted_edge_types: weighted_edge_types.iter().map(|etw| {
+                features_proto::EdgeTypeWeight {
+                    edge_type: etw.edge_type.clone(),
+                    weight:    etw.weight,
+                }
+            }).collect(),
+            required_edge_types: required_edge_types.iter().map(|s| (*s).to_string()).collect(),
+            edge_types:           vec![],
             k,
             min_similarity,
             upsert_edges,
@@ -187,22 +202,34 @@ impl FeatureClient {
         })
     }
 
-    /// Batch-build SIMILAR_TO edges for all nodes of `node_type`.
+    /// Batch-build SIMILAR_TO edges for all nodes of `node_type` in parallel.
     ///
-    /// Iterates every node of the given type, computes Jaccard similarity against
-    /// co-neighbors, and upserts the top-k results as edges of `similar_to_edge_type`
-    /// (must be registered with minimal_payload=true).
+    /// Iterates every node of the given type, computes weighted per-type Jaccard
+    /// similarity against co-neighbors, and upserts the top-k results as edges of
+    /// `similar_to_edge_type` (must be registered with minimal_payload=true).
+    ///
+    /// `required_edge_types`: names of edge types that must produce a non-zero
+    /// per-type Jaccard score for a candidate to be linked. Pass `&[]` for
+    /// no hard constraints.
     pub async fn build_similarity_graph(
         &mut self,
         node_type:            &str,
-        edge_types:           &[&str],
+        weighted_edge_types:  &[EdgeTypeWeight],
+        required_edge_types:  &[&str],
         k:                    u32,
         min_similarity:       f32,
         similar_to_edge_type: &str,
     ) -> Result<BuildSimilarityGraphResult, ClientError> {
         let req = features_proto::BuildSimilarityGraphRequest {
-            node_type:            node_type.to_string(),
-            edge_types:           edge_types.iter().map(|s| (*s).to_string()).collect(),
+            node_type: node_type.to_string(),
+            weighted_edge_types: weighted_edge_types.iter().map(|etw| {
+                features_proto::EdgeTypeWeight {
+                    edge_type: etw.edge_type.clone(),
+                    weight:    etw.weight,
+                }
+            }).collect(),
+            required_edge_types: required_edge_types.iter().map(|s| (*s).to_string()).collect(),
+            edge_types:           vec![],
             k,
             min_similarity,
             similar_to_edge_type: similar_to_edge_type.to_string(),

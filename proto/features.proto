@@ -213,22 +213,36 @@ message NodeFeatureVectorResponse {
 // Similarity RPCs
 // ---------------------------------------------------------------------------
 
-// Find the top-k most similar nodes to a given node using shared-neighbor Jaccard.
+// Per-edge-type weight for weighted similarity scoring.
+// The engine normalises internally; weights do not need to sum to 1.0.
+message EdgeTypeWeight {
+    string edge_type = 1;
+    float  weight    = 2;
+}
+
+// Find the top-k most similar nodes to a given node using weighted per-type Jaccard.
 // Optionally upsert the results as SIMILAR_TO edges (requires similar_to_edge_type
 // to be registered with minimal_payload = true).
 message FindSimilarNodesRequest {
     // The query node.
     NodeRef         node                 = 1;
-    // Which edge types to use when computing shared neighbors.
+    // Kept for backward compatibility — if provided and weighted_edge_types is empty,
+    // each type is assigned weight 1.0.
     repeated string edge_types           = 2;
     // Maximum number of similar nodes to return (default 10).
     uint32          k                    = 3;
-    // Minimum Jaccard score (0.0–1.0) required to include a candidate.
+    // Minimum weighted similarity score (0.0–1.0) required to include a candidate.
     float           min_similarity       = 4;
-    // If true, upsert a SIMILAR_TO edge for each result with value = Jaccard score.
+    // If true, upsert a SIMILAR_TO edge for each result with value = similarity score.
     bool            upsert_edges         = 5;
     // Edge type name to upsert (required when upsert_edges = true).
     string          similar_to_edge_type = 6;
+    // Preferred: per-type weights. Overrides edge_types when non-empty.
+    repeated EdgeTypeWeight weighted_edge_types = 7;
+    // Edge type names that must have a non-zero per-type Jaccard score.
+    // A candidate scoring 0 on any required type is excluded regardless of overall score.
+    // Must be a subset of the names listed in weighted_edge_types (or edge_types).
+    repeated string required_edge_types = 8;
 }
 
 message SimilarNode {
@@ -242,20 +256,27 @@ message FindSimilarNodesResponse {
     repeated SimilarNode similar_nodes = 2;
 }
 
-// Batch-build SIMILAR_TO edges for all nodes of a given type.
-// Iterates every node of node_type and computes Jaccard similarity against
-// its co-neighbors, upserting top-k results as SIMILAR_TO edges.
+// Batch-build SIMILAR_TO edges for all nodes of a given type in parallel.
+// Iterates every node of node_type and computes weighted per-type Jaccard similarity
+// against its co-neighbors, upserting top-k results as SIMILAR_TO edges.
 message BuildSimilarityGraphRequest {
     // Node type to iterate over.
     string          node_type            = 1;
-    // Edge types used to discover shared neighbors.
+    // Kept for backward compatibility — if provided and weighted_edge_types is empty,
+    // each type is assigned weight 1.0.
     repeated string edge_types           = 2;
     // Maximum similar nodes to link per node.
     uint32          k                    = 3;
-    // Minimum Jaccard score to create an edge.
+    // Minimum weighted similarity score to create an edge.
     float           min_similarity       = 4;
     // Edge type name for the SIMILAR_TO edges (must exist with minimal_payload = true).
     string          similar_to_edge_type = 5;
+    // Preferred: per-type weights. Overrides edge_types when non-empty.
+    repeated EdgeTypeWeight weighted_edge_types = 6;
+    // Edge type names that must have a non-zero per-type Jaccard score.
+    // A candidate scoring 0 on any required type is excluded regardless of overall score.
+    // Must be a subset of the names listed in weighted_edge_types (or edge_types).
+    repeated string required_edge_types = 7;
 }
 
 message BuildSimilarityGraphResponse {

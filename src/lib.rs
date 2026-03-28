@@ -43,7 +43,7 @@
 //! then build or query similarity in real time:
 //!
 //! ```no_run
-//! use fraud_graph_client::{Client, NodeRef};
+//! use fraud_graph_client::{Client, EdgeTypeWeight, NodeRef};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -53,24 +53,35 @@
 //!     client.register_static_edge_type("SIMILAR_TO", "card", "card", 86400).await?;
 //!     client.schema().finalize().await?;
 //!
-//!     // Batch-build for all card nodes.
+//!     // Batch-build with per-type weights.
+//!     // LOCATED_IN is required: candidates with zero location similarity are excluded
+//!     // even if their overall weighted score is high.
 //!     let result = client.build_similarity_graph(
 //!         "card",
-//!         &["TRANSACTS_AT", "USES_DEVICE"],
+//!         &[
+//!             EdgeTypeWeight::new("TRANSACTS_AT", 0.5),
+//!             EdgeTypeWeight::new("USES_DEVICE",  0.3),
+//!             EdgeTypeWeight::new("USES_IP",       0.2),
+//!         ],
+//!         &[],   // no required types for this example
 //!         10,    // top-k
-//!         0.1,   // min Jaccard
+//!         0.1,   // min weighted similarity
 //!         "SIMILAR_TO",
 //!     ).await?;
 //!     println!("{} edges created in {} ms", result.edges_created, result.elapsed_ms);
 //!
-//!     // Per-node real-time query (no upsert).
+//!     // Per-node real-time query with a required location constraint.
 //!     let similar = client.find_similar_nodes(
 //!         NodeRef::external("card", "card-01"),
-//!         &["TRANSACTS_AT"],
+//!         &[
+//!             EdgeTypeWeight::new("LOCATED_IN",   1.0),
+//!             EdgeTypeWeight::new("HAS_PRICE_RANGE", 0.5),
+//!         ],
+//!         &["LOCATED_IN"],  // must share at least one location neighbor
 //!         5, 0.1, false, "",
 //!     ).await?;
 //!     for s in &similar.similar_nodes {
-//!         println!("  node {} — jaccard {:.3}", s.node_id, s.similarity);
+//!         println!("  node {} — similarity {:.3}", s.node_id, s.similarity);
 //!     }
 //!
 //!     Ok(())
@@ -93,6 +104,7 @@ pub use features::{
     FindSimilarNodesResult,
     BuildSimilarityGraphResult,
 };
+pub use types::EdgeTypeWeight;
 pub use health::HealthClient;
 pub use types::*;
 
@@ -237,14 +249,22 @@ impl Client {
         self.schema().register_static_edge_type(name, from_node_type, to_node_type, state_ttl_secs).await
     }
 
-    /// Find the top-k most similar nodes to `node` using shared-neighbor Jaccard.
+    /// Find the top-k most similar nodes to `node` using weighted per-type Jaccard.
     ///
-    /// `edge_types` are the edge types used to discover co-neighbors. If `upsert_edges`
-    /// is true, the engine writes SIMILAR_TO edges (must exist with `minimal_payload=true`).
+    /// Each `EdgeTypeWeight` specifies an edge type and its relative importance.
+    /// Weights need not sum to 1.0 — the engine normalises internally.
+    ///
+    /// `required_edge_types`: names of edge types where a non-zero per-type Jaccard
+    /// score is mandatory. Candidates scoring 0 on any required type are excluded
+    /// regardless of their overall weighted score. Pass `&[]` for no hard constraints.
+    ///
+    /// If `upsert_edges` is true, the engine writes SIMILAR_TO edges
+    /// (must exist with `minimal_payload=true`).
     pub async fn find_similar_nodes(
         &self,
         node:                 NodeRef,
-        edge_types:           &[&str],
+        weighted_edge_types:  &[EdgeTypeWeight],
+        required_edge_types:  &[&str],
         k:                    u32,
         min_similarity:       f32,
         upsert_edges:         bool,
@@ -252,26 +272,32 @@ impl Client {
     ) -> Result<FindSimilarNodesResult, ClientError> {
         let mut features = self.features();
         features.find_similar_nodes(
-            node, edge_types, k, min_similarity, upsert_edges, similar_to_edge_type,
+            node, weighted_edge_types, required_edge_types,
+            k, min_similarity, upsert_edges, similar_to_edge_type,
         ).await
     }
 
-    /// Batch-build SIMILAR_TO edges for all nodes of `node_type`.
+    /// Batch-build SIMILAR_TO edges for all nodes of `node_type` in parallel.
     ///
-    /// Iterates every node, computes Jaccard similarity via shared neighbors,
-    /// and upserts the top-k results into `similar_to_edge_type` (must be registered
-    /// with `minimal_payload=true`). Runs concurrently with normal graph traffic.
+    /// Iterates every node, computes weighted per-type Jaccard similarity via
+    /// shared neighbors, and upserts the top-k results into `similar_to_edge_type`
+    /// (must be registered with `minimal_payload=true`).
+    ///
+    /// `required_edge_types`: names of edge types where a non-zero per-type Jaccard
+    /// score is mandatory. Pass `&[]` for no hard constraints.
     pub async fn build_similarity_graph(
         &self,
         node_type:            &str,
-        edge_types:           &[&str],
+        weighted_edge_types:  &[EdgeTypeWeight],
+        required_edge_types:  &[&str],
         k:                    u32,
         min_similarity:       f32,
         similar_to_edge_type: &str,
     ) -> Result<BuildSimilarityGraphResult, ClientError> {
         let mut features = self.features();
         features.build_similarity_graph(
-            node_type, edge_types, k, min_similarity, similar_to_edge_type,
+            node_type, weighted_edge_types, required_edge_types,
+            k, min_similarity, similar_to_edge_type,
         ).await
     }
 }
