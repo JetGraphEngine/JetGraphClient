@@ -40,6 +40,36 @@ cargo run --example quickstart
 
 `quickstart` expects an engine at `http://localhost:50051` with schema already finalized.
 
+### gRPC load test (upsert + query)
+
+Run the dedicated load-test example:
+
+```bash
+cargo run --example grpc_load_test -- \
+  --endpoint http://localhost:50051 \
+  --mode both \
+  --edge-type TRANSACTS_AT \
+  --src-type card \
+  --dst-type merchant \
+  --pair-count 20000 \
+  --upsert-requests 200000 \
+  --query-requests 200000 \
+  --concurrency 64
+```
+
+If your engine uses a different schema, set `--src-type`, `--dst-type`, and `--edge-type` to match it.
+On a fresh/non-finalized schema, you can auto-register the test types with `--bootstrap-schema`.
+
+What it does:
+- creates/ensures node pairs for the configured source/destination types
+- seeds edge pairs so query tests hit existing relationships
+- runs warmup + measured phases for upsert and/or query over gRPC
+- prints throughput and latency stats (avg, p50, p95, p99, max)
+
+For lowest latency numbers, run in release mode and keep the default `node_id` fast path
+(`--use-external-refs` disables it and is slower because the engine must resolve external IDs).
+Add `--require-sub-ms` to make the run fail unless `lat_avg_ms < 1.000`.
+
 ## API overview
 
 See the crate-level docs (`src/lib.rs`) and the former integration notes in the engine repo’s `INTEGRATION_MANUAL.md` (Section 16 — update paths to point at this project).
