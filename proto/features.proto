@@ -13,6 +13,9 @@ service FeatureService {
     rpc FindSimilarNodes     (FindSimilarNodesRequest)     returns (FindSimilarNodesResponse);
     // Batch k-NN: build SIMILAR_TO edges for all nodes of a given type.
     rpc BuildSimilarityGraph (BuildSimilarityGraphRequest) returns (BuildSimilarityGraphResponse);
+    // Delete all stored (src, dst) pairs for the named edge type.
+    // The edge type schema definition is preserved; only data is cleared.
+    rpc ClearEdgeTypeData    (ClearEdgeTypeDataRequest)    returns (ClearEdgeTypeDataResponse);
 }
 
 message NodeRef {
@@ -284,4 +287,18 @@ message BuildSimilarityGraphResponse {
     uint64 edges_created   = 2;
     uint64 edges_updated   = 3;
     uint64 elapsed_ms      = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Edge type data management
+// ---------------------------------------------------------------------------
+
+// Delete all (src, dst) pairs for an edge type while keeping the schema definition.
+message ClearEdgeTypeDataRequest {
+    string edge_type_name = 1;
+}
+
+message ClearEdgeTypeDataResponse {
+    string edge_type_name = 1;
+    uint64 pairs_removed  = 2;
 }

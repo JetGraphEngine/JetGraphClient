@@ -202,6 +202,21 @@ impl FeatureClient {
         })
     }
 
+    /// Delete all stored edges of the given edge type.
+    ///
+    /// The edge type definition (schema) is preserved; only the data is removed.
+    /// Returns the number of (src, dst) pairs that were cleared.
+    pub async fn clear_edge_type_data(
+        &mut self,
+        edge_type_name: &str,
+    ) -> Result<u64, ClientError> {
+        let req = features_proto::ClearEdgeTypeDataRequest {
+            edge_type_name: edge_type_name.to_string(),
+        };
+        let r = self.client.clear_edge_type_data(req).await.map_err(ClientError::from)?;
+        Ok(r.into_inner().pairs_removed)
+    }
+
     /// Batch-build SIMILAR_TO edges for all nodes of `node_type` in parallel.
     ///
     /// Iterates every node of the given type, computes weighted per-type Jaccard

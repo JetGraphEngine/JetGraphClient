@@ -300,4 +300,19 @@ impl Client {
             k, min_similarity, similar_to_edge_type,
         ).await
     }
+
+    /// Delete all stored edges of the given edge type while keeping the type definition intact.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # async fn example(mut client: graph_client::Client) -> anyhow::Result<()> {
+    /// let removed = client.clear_edge_type_data("SIMILAR_TO").await?;
+    /// println!("{removed} pairs removed");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn clear_edge_type_data(&self, edge_type_name: &str) -> Result<u64, ClientError> {
+        let mut features = self.features();
+        features.clear_edge_type_data(edge_type_name).await
+    }
 }
