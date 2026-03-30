@@ -10,8 +10,18 @@ service SchemaService {
     rpc GetMemoryUsage           (GetMemoryUsageRequest) returns (GetMemoryUsageResponse);
 }
 
+// How external IDs for this node type are stored and hashed.
+// NUMERIC (default, 0): external_id is parsed as u64 — saves ~28 B/node vs Str.
+// STRING  (1):          external_id is stored as Arc<str> — use when IDs are not pure integers.
+enum ExternalIdKind {
+    EXTERNAL_ID_KIND_NUMERIC = 0;
+    EXTERNAL_ID_KIND_STRING  = 1;
+}
+
 message NodeTypeSpec {
-    string name = 1;
+    string         name        = 1;
+    // Omitting this field defaults to NUMERIC (the proto3 zero value).
+    ExternalIdKind ext_id_kind = 2;
 }
 
 // Compact edge type (uses UpsertEdge, one payload per unique pair).
@@ -86,8 +96,9 @@ message FinalizeRequest {}
 message GetSchemaRequest {}
 
 message NodeTypeInfo {
-    uint32 id   = 1;
-    string name = 2;
+    uint32         id          = 1;
+    string         name        = 2;
+    ExternalIdKind ext_id_kind = 3;
 }
 
 message EdgeTypeInfo {

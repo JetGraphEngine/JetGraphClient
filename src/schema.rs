@@ -21,9 +21,28 @@ impl SchemaClient {
         }
     }
 
-    /// Register a node type.
-    pub async fn register_node_type(&mut self, name: &str) -> Result<u32, ClientError> {
-        let req = schema_proto::NodeTypeSpec { name: name.to_string() };
+    /// Register a node type with the given name and external ID kind.
+    ///
+    /// `numeric` (default): external IDs are stored as `u64`. Saves ~28 B/node vs `string`.
+    /// Use `numeric` when all external IDs for this type are pure integers.
+    ///
+    /// `string`: external IDs are stored as `Arc<str>`. Use when IDs contain non-numeric chars.
+    ///
+    /// The kind is **frozen at registration** — changing it after nodes are written corrupts NodeIds.
+    pub async fn register_node_type(
+        &mut self,
+        name: &str,
+        numeric_ids: bool,
+    ) -> Result<u32, ClientError> {
+        let ext_id_kind = if numeric_ids {
+            schema_proto::ExternalIdKind::Numeric as i32
+        } else {
+            schema_proto::ExternalIdKind::String as i32
+        };
+        let req = schema_proto::NodeTypeSpec {
+            name: name.to_string(),
+            ext_id_kind,
+        };
         let r = self.client.register_node_type(req).await.map_err(ClientError::from)?;
         Ok(r.into_inner().node_type_id)
     }
@@ -143,6 +162,7 @@ impl SchemaClient {
             node_types: inner.node_types.into_iter().map(|n| NodeTypeInfo {
                 id: n.id,
                 name: n.name,
+                numeric_ids: n.ext_id_kind != schema_proto::ExternalIdKind::String as i32,
             }).collect(),
             edge_types: inner.edge_types.into_iter().map(|e| EdgeTypeInfo {
                 id: e.id,
@@ -168,6 +188,9 @@ pub struct GetSchemaResult {
 pub struct NodeTypeInfo {
     pub id: u32,
     pub name: String,
+    /// True when external IDs for this node type are stored as `u64` (numeric).
+    /// False when stored as `Arc<str>` (string).
+    pub numeric_ids: bool,
 }
 
 #[derive(Debug, Clone)]
