@@ -28,6 +28,9 @@ impl Mode {
 #[derive(Clone, Debug)]
 struct Config {
     endpoint: String,
+    /// Create one independent gRPC connection per worker instead of sharing one.
+    /// Removes h2 connection-level mutex contention under high concurrency.
+    per_worker_connections: bool,
     mode: Mode,
     edge_type: String,
     src_type: String,
@@ -49,6 +52,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             endpoint: "http://localhost:50051".to_string(),
+            per_worker_connections: false,
             mode: Mode::Both,
             edge_type: "TRANSACTS_AT".to_string(),
             src_type: "card".to_string(),
@@ -140,6 +144,9 @@ impl Config {
                 "--require-sub-ms" => {
                     cfg.require_sub_ms = true;
                 }
+                "--per-worker-connections" => {
+                    cfg.per_worker_connections = true;
+                }
                 flag => {
                     return Err(format!("unknown argument '{flag}' (use --help)"));
                 }
@@ -181,6 +188,22 @@ struct WorkloadData {
     pairs: Arc<Vec<(NodeRef, NodeRef)>>,
 }
 
+/// Create a pool of clients: one per worker if `--per-worker-connections` is set,
+/// otherwise N clones of a single shared channel.
+async fn make_clients(cfg: &Config) -> Result<Vec<Client>, Box<dyn Error>> {
+    if cfg.per_worker_connections {
+        println!("Creating {} independent connections (one per worker)...", cfg.concurrency);
+        let mut clients = Vec::with_capacity(cfg.concurrency);
+        for _ in 0..cfg.concurrency {
+            clients.push(Client::connect(&cfg.endpoint).await?);
+        }
+        Ok(clients)
+    } else {
+        let c = Client::connect(&cfg.endpoint).await?;
+        Ok(vec![c; cfg.concurrency])
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cfg = Config::parse().map_err(|e| format!("argument error: {e}"))?;
@@ -198,14 +221,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if matches!(cfg.mode, Mode::Upsert | Mode::Both) {
         warmup_upsert(&client, &cfg, &data).await?;
-        let summary = run_upsert_load(client.clone(), cfg.clone(), data.clone()).await?;
+        let clients = make_clients(&cfg).await?;
+        let summary = run_upsert_load(clients, cfg.clone(), data.clone()).await?;
         print_summary(&summary);
         enforce_sub_ms_if_requested(&cfg, &summary)?;
     }
 
     if matches!(cfg.mode, Mode::Query | Mode::Both) {
         warmup_query(&client, &cfg, &data).await?;
-        let summary = run_query_load(client.clone(), cfg.clone(), data.clone()).await?;
+        let clients = make_clients(&cfg).await?;
+        let summary = run_query_load(clients, cfg.clone(), data.clone()).await?;
         print_summary(&summary);
         enforce_sub_ms_if_requested(&cfg, &summary)?;
     }
@@ -472,7 +497,7 @@ async fn warmup_query(client: &Client, cfg: &Config, data: &WorkloadData) -> Res
     Ok(())
 }
 
-async fn run_upsert_load(client: Client, cfg: Config, data: WorkloadData) -> Result<RunSummary, Box<dyn Error>> {
+async fn run_upsert_load(clients: Vec<Client>, cfg: Config, data: WorkloadData) -> Result<RunSummary, Box<dyn Error>> {
     println!(
         "Running upsert load: requests={} concurrency={}...",
         cfg.upsert_requests, cfg.concurrency
@@ -481,8 +506,8 @@ async fn run_upsert_load(client: Client, cfg: Config, data: WorkloadData) -> Res
     let mut joins = Vec::with_capacity(cfg.concurrency);
     let start = Instant::now();
 
-    for worker_id in 0..cfg.concurrency {
-        let c = client.clone();
+    for (worker_id, c) in clients.into_iter().enumerate() {
+        let _ = worker_id;
         let cfg = cfg.clone();
         let counter = counter.clone();
         let pairs = data.pairs.clone();
@@ -534,7 +559,7 @@ async fn run_upsert_load(client: Client, cfg: Config, data: WorkloadData) -> Res
     })
 }
 
-async fn run_query_load(client: Client, cfg: Config, data: WorkloadData) -> Result<RunSummary, Box<dyn Error>> {
+async fn run_query_load(clients: Vec<Client>, cfg: Config, data: WorkloadData) -> Result<RunSummary, Box<dyn Error>> {
     println!(
         "Running query load: requests={} concurrency={}...",
         cfg.query_requests, cfg.concurrency
@@ -543,8 +568,7 @@ async fn run_query_load(client: Client, cfg: Config, data: WorkloadData) -> Resu
     let mut joins = Vec::with_capacity(cfg.concurrency);
     let start = Instant::now();
 
-    for _worker_id in 0..cfg.concurrency {
-        let c = client.clone();
+    for c in clients.into_iter() {
         let cfg = cfg.clone();
         let counter = counter.clone();
         let pairs = data.pairs.clone();
