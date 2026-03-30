@@ -49,6 +49,119 @@ impl NodeRef {
     }
 }
 
+/// Node declaration in a best-effort transaction ingest request.
+#[derive(Debug, Clone)]
+pub struct TransactionNode {
+    pub request_node_key: Option<String>,
+    pub node_type: String,
+    pub external_id: String,
+    pub properties: Vec<PropertyEntry>,
+}
+
+impl TransactionNode {
+    pub fn new(node_type: impl Into<String>, external_id: impl Into<String>) -> Self {
+        Self {
+            request_node_key: None,
+            node_type: node_type.into(),
+            external_id: external_id.into(),
+            properties: Vec::new(),
+        }
+    }
+
+    pub fn with_key(mut self, request_node_key: impl Into<String>) -> Self {
+        self.request_node_key = Some(request_node_key.into());
+        self
+    }
+
+    pub fn with_properties(mut self, properties: Vec<PropertyEntry>) -> Self {
+        self.properties = properties;
+        self
+    }
+}
+
+/// Source/destination reference for transaction ingest edges.
+#[derive(Debug, Clone)]
+pub enum TransactionNodeRef {
+    Node(NodeRef),
+    RequestNodeKey(String),
+}
+
+impl TransactionNodeRef {
+    pub fn node(node: NodeRef) -> Self {
+        Self::Node(node)
+    }
+
+    pub fn request_node_key(key: impl Into<String>) -> Self {
+        Self::RequestNodeKey(key.into())
+    }
+}
+
+/// Edge declaration in a best-effort transaction ingest request.
+#[derive(Debug, Clone)]
+pub struct TransactionEdge {
+    pub request_edge_key: Option<String>,
+    pub edge_type: String,
+    pub src: TransactionNodeRef,
+    pub dst: TransactionNodeRef,
+    pub numeric_value: Option<f32>,
+    pub event_ts_secs: Option<u32>,
+    pub bool_property_value: Option<bool>,
+}
+
+impl TransactionEdge {
+    pub fn new(
+        edge_type: impl Into<String>,
+        src: TransactionNodeRef,
+        dst: TransactionNodeRef,
+    ) -> Self {
+        Self {
+            request_edge_key: None,
+            edge_type: edge_type.into(),
+            src,
+            dst,
+            numeric_value: None,
+            event_ts_secs: None,
+            bool_property_value: None,
+        }
+    }
+
+    pub fn with_key(mut self, request_edge_key: impl Into<String>) -> Self {
+        self.request_edge_key = Some(request_edge_key.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeIngestOutcome {
+    pub index: u32,
+    pub request_node_key: Option<String>,
+    pub node_id: Option<u64>,
+    pub created: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EdgeIngestOutcome {
+    pub index: u32,
+    pub request_edge_key: Option<String>,
+    pub created_new: bool,
+    pub payload: Option<UpsertEdgeResult>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IngestTransactionResult {
+    pub transaction_id: String,
+    pub nodes_created: u32,
+    pub nodes_existing: u32,
+    pub node_errors: u32,
+    pub edges_created: u32,
+    pub edges_updated: u32,
+    pub edge_errors: u32,
+    pub node_results: Vec<NodeIngestOutcome>,
+    pub edge_results: Vec<EdgeIngestOutcome>,
+}
+
 /// A property entry (name, value).
 #[derive(Debug, Clone)]
 pub struct PropertyEntry {

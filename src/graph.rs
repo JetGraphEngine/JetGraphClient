@@ -1,7 +1,12 @@
 //! Graph service client: nodes, edges, neighbors.
 
 use tonic::transport::Channel;
-use crate::{ClientError, NodeRef, PropertyEntry, PropertyValue, UpsertEdgeResult, EdgeState, NeighborEdge, CreateNodeResult, NodePropertyFilter, NodePropPredicate};
+use crate::{
+    ClientError, NodeRef, PropertyEntry, PropertyValue, UpsertEdgeResult, EdgeState, NeighborEdge,
+    CreateNodeResult, NodePropertyFilter, NodePropPredicate,
+    TransactionNode, TransactionNodeRef, TransactionEdge,
+    IngestTransactionResult, NodeIngestOutcome, EdgeIngestOutcome,
+};
 
 pub mod graph_proto {
     tonic::include_proto!("graph");
@@ -68,6 +73,21 @@ impl GraphClient {
         }
     }
 
+    fn transaction_node_ref_to_proto(r: &TransactionNodeRef) -> graph_proto::TransactionNodeRef {
+        use graph_proto::transaction_node_ref::Reference;
+        let reference = match r {
+            TransactionNodeRef::Node(node_ref) => {
+                Reference::Node(Self::node_ref_to_proto(node_ref))
+            }
+            TransactionNodeRef::RequestNodeKey(key) => {
+                Reference::RequestNodeKey(key.clone())
+            }
+        };
+        graph_proto::TransactionNodeRef {
+            reference: Some(reference),
+        }
+    }
+
     /// Create a node. With external_id, idempotent (no lookup, content-addressable).
     /// Returns (node_id, created).
     pub async fn create_node(
@@ -122,6 +142,91 @@ impl GraphClient {
             activity_bitmap_raw: payload.flags,
             bins,
             bool_flag: payload.bool_flag,
+        })
+    }
+
+    /// Best-effort transaction ingest: ensure nodes and upsert edges in one call.
+    pub async fn ingest_transaction(
+        &self,
+        transaction_id: Option<&str>,
+        nodes: &[TransactionNode],
+        edges: &[TransactionEdge],
+    ) -> Result<IngestTransactionResult, ClientError> {
+        let req = graph_proto::IngestTransactionRequest {
+            transaction_id: transaction_id.unwrap_or("").to_string(),
+            nodes: nodes
+                .iter()
+                .map(|n| graph_proto::TransactionNode {
+                    request_node_key: n.request_node_key.clone().unwrap_or_default(),
+                    node_type_name: n.node_type.clone(),
+                    external_id: n.external_id.clone(),
+                    properties: n.properties.iter().map(Self::property_to_proto).collect(),
+                })
+                .collect(),
+            edges: edges
+                .iter()
+                .map(|e| graph_proto::TransactionEdge {
+                    request_edge_key: e.request_edge_key.clone().unwrap_or_default(),
+                    edge_type_name: e.edge_type.clone(),
+                    src: Some(Self::transaction_node_ref_to_proto(&e.src)),
+                    dst: Some(Self::transaction_node_ref_to_proto(&e.dst)),
+                    numeric_value: e.numeric_value,
+                    event_ts_secs: e.event_ts_secs,
+                    bool_property_value: e.bool_property_value,
+                })
+                .collect(),
+        };
+
+        let r = self.client.clone().ingest_transaction(req).await.map_err(ClientError::from)?;
+        let inner = r.into_inner();
+
+        let node_results = inner.node_results.into_iter().map(|n| NodeIngestOutcome {
+            index: n.index,
+            request_node_key: if n.request_node_key.is_empty() { None } else { Some(n.request_node_key) },
+            node_id: if n.error.is_some() { None } else { Some(n.node_id) },
+            created: n.created,
+            error: n.error,
+        }).collect();
+
+        let edge_results = inner.edge_results.into_iter().map(|e| {
+            let graph_proto::EdgeIngestResult {
+                index,
+                request_edge_key,
+                created_new,
+                payload,
+                error,
+            } = e;
+            let payload = payload.map(|p| {
+                let bins = decode_bins(&p.bins);
+                UpsertEdgeResult {
+                    created_new,
+                    tx_count: p.tx_count,
+                    approx_sum: p.approx_sum,
+                    last_seen: p.last_seen,
+                    activity_bitmap_raw: p.flags,
+                    bins,
+                    bool_flag: p.bool_flag,
+                }
+            });
+            EdgeIngestOutcome {
+                index,
+                request_edge_key: if request_edge_key.is_empty() { None } else { Some(request_edge_key) },
+                created_new,
+                payload,
+                error,
+            }
+        }).collect();
+
+        Ok(IngestTransactionResult {
+            transaction_id: inner.transaction_id,
+            nodes_created: inner.nodes_created,
+            nodes_existing: inner.nodes_existing,
+            node_errors: inner.node_errors,
+            edges_created: inner.edges_created,
+            edges_updated: inner.edges_updated,
+            edge_errors: inner.edge_errors,
+            node_results,
+            edge_results,
         })
     }
 

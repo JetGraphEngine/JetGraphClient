@@ -196,6 +196,16 @@ impl Client {
         self.graph().upsert_edge(edge_type, src, dst, numeric_value, event_ts_secs, bool_property_value).await
     }
 
+    /// Best-effort transaction ingest: ensure nodes and upsert edges in one call.
+    pub async fn ingest_transaction(
+        &self,
+        transaction_id: Option<&str>,
+        nodes: &[TransactionNode],
+        edges: &[TransactionEdge],
+    ) -> Result<IngestTransactionResult, ClientError> {
+        self.graph().ingest_transaction(transaction_id, nodes, edges).await
+    }
+
     /// Get edge state, optionally with activity windows for activity-bitmap edge types.
     pub async fn get_edge_state(
         &self,

@@ -70,6 +70,22 @@ For lowest latency numbers, run in release mode and keep the default `node_id` f
 (`--use-external-refs` disables it and is slower because the engine must resolve external IDs).
 Add `--require-sub-ms` to make the run fail unless `lat_avg_ms < 1.000`.
 
+### One-call transaction ingest (best-effort)
+
+Use one RPC to ensure multiple nodes and upsert multiple edges in one request:
+
+```bash
+cargo run --example ingest_transaction
+```
+
+The request carries:
+- `nodes[]`: `(node_type, external_id, optional request key, optional properties)`
+- `edges[]`: `(edge_type, src ref, dst ref, optional numeric/event/bool values)`
+
+Edges can reference nodes by `request_node_key` declared in the same request, or by normal
+`NodeRef` (`node_id` / external). The response is best-effort and includes per-node/per-edge
+results plus aggregate counters for created/updated/errors.
+
 ## API overview
 
 See the crate-level docs (`src/lib.rs`) and the former integration notes in the engine repo’s `INTEGRATION_MANUAL.md` (Section 16 — update paths to point at this project).
