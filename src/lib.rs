@@ -93,6 +93,7 @@ pub mod schema;
 pub mod features;
 pub mod health;
 pub mod types;
+pub mod segment;
 mod error;
 
 pub use error::ClientError;
@@ -107,6 +108,7 @@ pub use features::{
 pub use types::EdgeTypeWeight;
 pub use health::HealthClient;
 pub use types::*;
+pub use segment::{SegmentClient, EvalContextData, segment_name_from_edge};
 
 /// Re-export for schema property registration.
 pub use schema::schema_proto::ValueType;
@@ -169,6 +171,11 @@ impl Client {
         HealthClient::new(self.channel.clone())
     }
 
+    /// Segment operations: prefetch eval context, signal helpers, MEMBER_OF membership.
+    pub fn segment(&self) -> SegmentClient {
+        SegmentClient::new(self.channel.clone())
+    }
+
     // -------------------------------------------------------------------------
     // Convenience shortcuts (delegate to graph client)
     // -------------------------------------------------------------------------
@@ -204,6 +211,26 @@ impl Client {
         edges: &[TransactionEdge],
     ) -> Result<IngestTransactionResult, ClientError> {
         self.graph().ingest_transaction(transaction_id, nodes, edges).await
+    }
+
+    /// Ingest a transaction and return the raw result.
+    ///
+    /// After the write completes, extracts the `node_id` of every successfully
+    /// ingested node and returns them alongside the transaction result so the
+    /// segment evaluator can immediately re-evaluate those nodes without a
+    /// separate list call.
+    pub async fn ingest_and_get_node_ids(
+        &self,
+        transaction_id: Option<&str>,
+        nodes: &[TransactionNode],
+        edges: &[TransactionEdge],
+    ) -> Result<(IngestTransactionResult, Vec<u64>), ClientError> {
+        let result = self.graph().ingest_transaction(transaction_id, nodes, edges).await?;
+        let node_ids: Vec<u64> = result.node_results
+            .iter()
+            .filter_map(|n| n.node_id)
+            .collect();
+        Ok((result, node_ids))
     }
 
     /// Get edge state, optionally with activity windows for activity-bitmap edge types.

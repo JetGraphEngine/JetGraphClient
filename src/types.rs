@@ -267,6 +267,58 @@ pub struct NeighborEdge {
 // NodePropertyFilter — ergonomic API for neighbour property predicates
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Segment types
+// ---------------------------------------------------------------------------
+
+/// Which field to extract from a NodeHistogramResult.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistogramField {
+    /// Total event count over the window.
+    TotalEvents,
+    /// Weighted approximate sum (sum of bin_count * bin_midpoint).
+    TotalApproxSum,
+    /// Index of the highest-count bin (0-based).
+    PeakBin,
+}
+
+/// Which field to extract from an EdgeState.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeStateField {
+    /// Transaction count.
+    TxCount,
+    /// Approximate sum (for full edges, the accumulated numeric value).
+    ApproxSum,
+    /// Activity count over a window (requires `activity_window_secs` to be set).
+    ActivityCount,
+    /// Seconds since the edge was last seen/updated.
+    LastSeenSecs,
+}
+
+/// A segment a customer belongs to, returned by `get_customer_segments`.
+#[derive(Debug, Clone)]
+pub struct SegmentMembership {
+    pub segment_name:    String,
+    pub segment_node_id: u64,
+    /// Confidence score stored as the edge's float value (0.0–1.0).
+    pub confidence:      f32,
+    /// Unix timestamp (seconds) of the last evaluation that set this membership.
+    pub last_seen_secs:  u32,
+}
+
+/// A member of a segment, returned by `get_segment_members`.
+#[derive(Debug, Clone)]
+pub struct SegmentMember {
+    pub customer_node_id: u64,
+    /// Human-readable external ID of the member node (e.g. "card-velocity").
+    /// `None` if the node was created without an external ID.
+    pub external_id:      Option<String>,
+    /// Confidence score stored as the edge's float value (0.0–1.0).
+    pub confidence:       f32,
+    /// Unix timestamp (seconds) of the last evaluation that set this membership.
+    pub last_seen_secs:   u32,
+}
+
 /// A predicate on a neighbour node's property for use with `get_neighbors`.
 #[derive(Debug, Clone)]
 pub struct NodePropertyFilter {
