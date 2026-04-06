@@ -27,6 +27,26 @@ impl EdgeTypeWeight {
     }
 }
 
+/// A boolean node property treated as a virtual edge for weighted similarity scoring.
+///
+/// When a node has this property set to `true`, it is treated as though connected to
+/// a virtual shared neighbor. Two nodes both having the property `true` score Jaccard
+/// 1.0 on this dimension; one or both `false`/null scores 0.0.
+///
+/// The engine normalises internally; weights do not need to sum to 1.0.
+#[derive(Debug, Clone)]
+pub struct BoolPropertyWeight {
+    pub property_name: String,
+    pub weight:        f32,
+}
+
+impl BoolPropertyWeight {
+    /// Convenience constructor.
+    pub fn new(property_name: impl Into<String>, weight: f32) -> Self {
+        Self { property_name: property_name.into(), weight }
+    }
+}
+
 /// Reference to a node: either by NodeId or by external (type, id).
 #[derive(Debug, Clone)]
 pub enum NodeRef {

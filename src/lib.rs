@@ -297,21 +297,31 @@ impl Client {
     /// score is mandatory. Candidates scoring 0 on any required type are excluded
     /// regardless of their overall weighted score. Pass `&[]` for no hard constraints.
     ///
+    /// `bool_property_weights`: boolean node properties treated as virtual edges.
+    /// A node with the property `true` scores Jaccard 1.0 when the candidate also has
+    /// it `true`. Pass `&[]` to disable. See [`BoolPropertyWeight`].
+    ///
+    /// `required_bool_properties`: boolean property names that must score 1.0 for a
+    /// candidate to be returned. Pass `&[]` for no constraints.
+    ///
     /// If `upsert_edges` is true, the engine writes SIMILAR_TO edges
     /// (must exist with `minimal_payload=true`).
     pub async fn find_similar_nodes(
         &self,
-        node:                 NodeRef,
-        weighted_edge_types:  &[EdgeTypeWeight],
-        required_edge_types:  &[&str],
-        k:                    u32,
-        min_similarity:       f32,
-        upsert_edges:         bool,
-        similar_to_edge_type: &str,
+        node:                    NodeRef,
+        weighted_edge_types:     &[EdgeTypeWeight],
+        required_edge_types:     &[&str],
+        bool_property_weights:   &[BoolPropertyWeight],
+        required_bool_properties: &[&str],
+        k:                       u32,
+        min_similarity:          f32,
+        upsert_edges:            bool,
+        similar_to_edge_type:    &str,
     ) -> Result<FindSimilarNodesResult, ClientError> {
         let mut features = self.features();
         features.find_similar_nodes(
             node, weighted_edge_types, required_edge_types,
+            bool_property_weights, required_bool_properties,
             k, min_similarity, upsert_edges, similar_to_edge_type,
         ).await
     }
@@ -324,18 +334,27 @@ impl Client {
     ///
     /// `required_edge_types`: names of edge types where a non-zero per-type Jaccard
     /// score is mandatory. Pass `&[]` for no hard constraints.
+    ///
+    /// `bool_property_weights`: boolean node properties treated as virtual edges.
+    /// See [`BoolPropertyWeight`] and [`Client::find_similar_nodes`] for details.
+    ///
+    /// `required_bool_properties`: boolean property names that must score 1.0
+    /// for a candidate to be linked. Pass `&[]` for no constraints.
     pub async fn build_similarity_graph(
         &self,
-        node_type:            &str,
-        weighted_edge_types:  &[EdgeTypeWeight],
-        required_edge_types:  &[&str],
-        k:                    u32,
-        min_similarity:       f32,
-        similar_to_edge_type: &str,
+        node_type:               &str,
+        weighted_edge_types:     &[EdgeTypeWeight],
+        required_edge_types:     &[&str],
+        bool_property_weights:   &[BoolPropertyWeight],
+        required_bool_properties: &[&str],
+        k:                       u32,
+        min_similarity:          f32,
+        similar_to_edge_type:    &str,
     ) -> Result<BuildSimilarityGraphResult, ClientError> {
         let mut features = self.features();
         features.build_similarity_graph(
             node_type, weighted_edge_types, required_edge_types,
+            bool_property_weights, required_bool_properties,
             k, min_similarity, similar_to_edge_type,
         ).await
     }

@@ -1,7 +1,7 @@
 //! Feature service client: histograms, fraud context, flagging.
 
 use tonic::transport::Channel;
-use crate::{ClientError, EdgeTypeWeight, NodeRef};
+use crate::{BoolPropertyWeight, ClientError, EdgeTypeWeight, NodeRef};
 
 pub mod features_proto {
     tonic::include_proto!("features");
@@ -163,17 +163,26 @@ impl FeatureClient {
     /// per-type Jaccard score for a candidate to be returned. Pass `&[]` for
     /// no hard constraints (any score ≥ `min_similarity` is accepted).
     ///
+    /// `bool_property_weights`: boolean node properties treated as virtual edges.
+    /// A node with the property `true` scores Jaccard 1.0 when the candidate also
+    /// has it `true`. Pass `&[]` to disable. See [`BoolPropertyWeight`].
+    ///
+    /// `required_bool_properties`: boolean property names that must score 1.0
+    /// (both nodes `true`) for a candidate to be returned. Pass `&[]` for no constraints.
+    ///
     /// If `upsert_edges` is true, the engine writes SIMILAR_TO edges with the
     /// weighted score into `similar_to_edge_type` (must exist with minimal_payload=true).
     pub async fn find_similar_nodes(
         &mut self,
-        node:                 NodeRef,
-        weighted_edge_types:  &[EdgeTypeWeight],
-        required_edge_types:  &[&str],
-        k:                    u32,
-        min_similarity:       f32,
-        upsert_edges:         bool,
-        similar_to_edge_type: &str,
+        node:                    NodeRef,
+        weighted_edge_types:     &[EdgeTypeWeight],
+        required_edge_types:     &[&str],
+        bool_property_weights:   &[BoolPropertyWeight],
+        required_bool_properties: &[&str],
+        k:                       u32,
+        min_similarity:          f32,
+        upsert_edges:            bool,
+        similar_to_edge_type:    &str,
     ) -> Result<FindSimilarNodesResult, ClientError> {
         let req = features_proto::FindSimilarNodesRequest {
             node: Some(node_ref_to_proto(&node)),
@@ -184,6 +193,13 @@ impl FeatureClient {
                 }
             }).collect(),
             required_edge_types: required_edge_types.iter().map(|s| (*s).to_string()).collect(),
+            bool_property_weights: bool_property_weights.iter().map(|bpw| {
+                features_proto::BoolPropertyWeight {
+                    property_name: bpw.property_name.clone(),
+                    weight:        bpw.weight,
+                }
+            }).collect(),
+            required_bool_properties: required_bool_properties.iter().map(|s| (*s).to_string()).collect(),
             edge_types:           vec![],
             k,
             min_similarity,
@@ -226,14 +242,22 @@ impl FeatureClient {
     /// `required_edge_types`: names of edge types that must produce a non-zero
     /// per-type Jaccard score for a candidate to be linked. Pass `&[]` for
     /// no hard constraints.
+    ///
+    /// `bool_property_weights`: boolean node properties treated as virtual edges.
+    /// See [`BoolPropertyWeight`] and [`FeatureClient::find_similar_nodes`] for details.
+    ///
+    /// `required_bool_properties`: boolean property names that must score 1.0
+    /// for a candidate to be linked. Pass `&[]` for no constraints.
     pub async fn build_similarity_graph(
         &mut self,
-        node_type:            &str,
-        weighted_edge_types:  &[EdgeTypeWeight],
-        required_edge_types:  &[&str],
-        k:                    u32,
-        min_similarity:       f32,
-        similar_to_edge_type: &str,
+        node_type:               &str,
+        weighted_edge_types:     &[EdgeTypeWeight],
+        required_edge_types:     &[&str],
+        bool_property_weights:   &[BoolPropertyWeight],
+        required_bool_properties: &[&str],
+        k:                       u32,
+        min_similarity:          f32,
+        similar_to_edge_type:    &str,
     ) -> Result<BuildSimilarityGraphResult, ClientError> {
         let req = features_proto::BuildSimilarityGraphRequest {
             node_type: node_type.to_string(),
@@ -244,6 +268,13 @@ impl FeatureClient {
                 }
             }).collect(),
             required_edge_types: required_edge_types.iter().map(|s| (*s).to_string()).collect(),
+            bool_property_weights: bool_property_weights.iter().map(|bpw| {
+                features_proto::BoolPropertyWeight {
+                    property_name: bpw.property_name.clone(),
+                    weight:        bpw.weight,
+                }
+            }).collect(),
+            required_bool_properties: required_bool_properties.iter().map(|s| (*s).to_string()).collect(),
             edge_types:           vec![],
             k,
             min_similarity,

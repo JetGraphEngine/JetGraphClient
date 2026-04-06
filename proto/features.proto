@@ -223,6 +223,15 @@ message EdgeTypeWeight {
     float  weight    = 2;
 }
 
+// Boolean node property treated as a virtual edge for similarity scoring.
+// A node with the property set to true contributes a virtual shared neighbor
+// (Jaccard = 1.0 when both query and candidate have the property true).
+// A node with the property false or null contributes nothing (Jaccard = 0.0).
+message BoolPropertyWeight {
+    string property_name = 1;
+    float  weight        = 2;
+}
+
 // Find the top-k most similar nodes to a given node using weighted per-type Jaccard.
 // Optionally upsert the results as SIMILAR_TO edges (requires similar_to_edge_type
 // to be registered with minimal_payload = true).
@@ -246,6 +255,12 @@ message FindSimilarNodesRequest {
     // A candidate scoring 0 on any required type is excluded regardless of overall score.
     // Must be a subset of the names listed in weighted_edge_types (or edge_types).
     repeated string required_edge_types = 8;
+    // Boolean node properties to treat as virtual edges in scoring.
+    // A node with property = true contributes Jaccard 1.0 when the candidate also has it true.
+    repeated BoolPropertyWeight bool_property_weights = 10;
+    // Boolean property names that must score 1.0 (both nodes true) or the candidate is excluded.
+    // Must be a subset of the names listed in bool_property_weights.
+    repeated string required_bool_properties = 11;
 }
 
 message SimilarNode {
@@ -280,6 +295,12 @@ message BuildSimilarityGraphRequest {
     // A candidate scoring 0 on any required type is excluded regardless of overall score.
     // Must be a subset of the names listed in weighted_edge_types (or edge_types).
     repeated string required_edge_types = 7;
+    // Boolean node properties to treat as virtual edges in scoring.
+    // A node with property = true contributes Jaccard 1.0 when the candidate also has it true.
+    repeated BoolPropertyWeight bool_property_weights = 9;
+    // Boolean property names that must score 1.0 (both nodes true) or the candidate is excluded.
+    // Must be a subset of the names listed in bool_property_weights.
+    repeated string required_bool_properties = 10;
 }
 
 message BuildSimilarityGraphResponse {
