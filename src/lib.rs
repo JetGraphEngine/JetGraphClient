@@ -213,6 +213,43 @@ impl Client {
         self.graph().ingest_transaction(transaction_id, nodes, edges).await
     }
 
+    /// Open a high-throughput bidirectional streaming ingest session.
+    ///
+    /// Returns a `(sender, response_stream)` pair backed by the `IngestStream` gRPC
+    /// RPC.  The server accumulates messages into micro-batches (≤ 256 transactions
+    /// / 2 ms window), merges all edges by `(edge_type, src)` across the batch, and
+    /// applies each group in a single sorted-merge RCU pass — yielding significantly
+    /// higher throughput than calling `ingest_transaction` repeatedly.
+    ///
+    /// Use `GraphClient::build_ingest_request` to build proto messages, then send
+    /// them through the returned sender.  Drop the sender when finished; drain the
+    /// response stream to receive remaining responses.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use fraud_graph_client::{Client, GraphClient, TransactionEdge, TransactionNodeRef, NodeRef};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::connect("http://localhost:50051").await?;
+    /// let (tx, mut rx) = client.ingest_stream().await?;
+    /// let req = GraphClient::build_ingest_request(None, &[], &[]);
+    /// tx.send(req).await?;
+    /// drop(tx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn ingest_stream(
+        &self,
+    ) -> Result<
+        (
+            tokio::sync::mpsc::Sender<crate::graph::graph_proto::IngestTransactionRequest>,
+            tonic::Streaming<crate::graph::graph_proto::IngestTransactionResponse>,
+        ),
+        ClientError,
+    > {
+        self.graph().ingest_stream().await
+    }
+
     /// Ingest a transaction and return the raw result.
     ///
     /// After the write completes, extracts the `node_id` of every successfully

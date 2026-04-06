@@ -1,6 +1,7 @@
 //! Graph service client: nodes, edges, neighbors.
 
 use tonic::transport::Channel;
+use tonic::Streaming;
 use crate::{
     ClientError, NodeRef, PropertyEntry, PropertyValue, UpsertEdgeResult, EdgeState, NeighborEdge,
     CreateNodeResult, NodePropertyFilter, NodePropPredicate,
@@ -228,6 +229,66 @@ impl GraphClient {
             node_results,
             edge_results,
         })
+    }
+
+    /// Open a bidirectional streaming ingest session using the `IngestStream` RPC.
+    ///
+    /// Returns a `(sender, response_stream)` pair. Send
+    /// `IngestTransactionRequest` proto messages through the sender; receive
+    /// `IngestTransactionResponse` proto messages through the stream in the
+    /// same order. The server accumulates requests into micro-batches and merges
+    /// edges by `(edge_type, src)` for significantly higher throughput than
+    /// individual `IngestTransaction` calls.
+    ///
+    /// Use [`build_ingest_request`] to construct the request proto conveniently.
+    ///
+    /// Drop the sender when done to signal end-of-stream; drain the response
+    /// stream to receive remaining responses before the stream closes.
+    pub async fn ingest_stream(
+        &self,
+    ) -> Result<
+        (
+            tokio::sync::mpsc::Sender<graph_proto::IngestTransactionRequest>,
+            Streaming<graph_proto::IngestTransactionResponse>,
+        ),
+        ClientError,
+    > {
+        let (tx, rx) = tokio::sync::mpsc::channel::<graph_proto::IngestTransactionRequest>(1024);
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        let resp = self.client.clone()
+            .ingest_stream(stream)
+            .await
+            .map_err(ClientError::from)?
+            .into_inner();
+        Ok((tx, resp))
+    }
+
+    /// Build an `IngestTransactionRequest` from high-level types.
+    ///
+    /// Useful when constructing messages to send through [`ingest_stream`].
+    pub fn build_ingest_request(
+        transaction_id: Option<&str>,
+        nodes: &[TransactionNode],
+        edges: &[TransactionEdge],
+    ) -> graph_proto::IngestTransactionRequest {
+        graph_proto::IngestTransactionRequest {
+            transaction_id: transaction_id.unwrap_or("").to_string(),
+            nodes: nodes.iter().map(|n| graph_proto::TransactionNode {
+                request_node_key: n.request_node_key.clone().unwrap_or_default(),
+                node_type_name:   n.node_type.clone(),
+                external_id:      n.external_id.clone(),
+                properties:       n.properties.iter().map(Self::property_to_proto).collect(),
+            }).collect(),
+            edges: edges.iter().map(|e| graph_proto::TransactionEdge {
+                request_edge_key:    e.request_edge_key.clone().unwrap_or_default(),
+                edge_type_name:      e.edge_type.clone(),
+                src:                 Some(Self::transaction_node_ref_to_proto(&e.src)),
+                dst:                 Some(Self::transaction_node_ref_to_proto(&e.dst)),
+                numeric_value:       e.numeric_value,
+                event_ts_secs:       e.event_ts_secs,
+                bool_property_value: e.bool_property_value,
+            }).collect(),
+        }
     }
 
     /// Get edge state. Returns None if not found.

@@ -17,6 +17,11 @@ service GraphService {
     rpc GetLastNeighbor  (LastNeighborQuery)   returns (LastNeighborResponse);
     // Best-effort transaction ingest: ensure nodes and upsert edges in one request.
     rpc IngestTransaction (IngestTransactionRequest) returns (IngestTransactionResponse);
+    // High-throughput bidirectional streaming ingest.
+    // The server micro-batches incoming requests (up to 2 ms or 256 transactions),
+    // merges edges across transactions by (edge_type, src), applies each group with
+    // a single sorted-merge RCU pass, and streams responses back in request order.
+    rpc IngestStream (stream IngestTransactionRequest) returns (stream IngestTransactionResponse);
 }
 
 message NodeRef {
