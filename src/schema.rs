@@ -52,6 +52,9 @@ impl SchemaClient {
     /// `bool_property_name`: optional name for the single boolean property stored in bit 63 of
     /// the activity flags field. Pass `None` (or `Some("")`) for no boolean property. Cannot be
     /// combined with static edge types (`minimal_payload = true`).
+    ///
+    /// `symmetric`: when true, edges are undirected — upserts normalize to (min,max) and
+    /// neighbor queries return out ∪ in. Requires `from_node_type == to_node_type`.
     pub async fn register_compact_edge_type(
         &mut self,
         name: &str,
@@ -62,6 +65,7 @@ impl SchemaClient {
         tracked_property: &str,
         activity_tick_size_secs: u64,
         bool_property_name: Option<&str>,
+        symmetric: bool,
     ) -> Result<u32, ClientError> {
         let field_schema = if !bin_boundaries.is_empty() {
             Some(schema_proto::CompactFieldSchema {
@@ -93,6 +97,7 @@ impl SchemaClient {
             }),
             minimal_payload: false,
             bool_property: bool_property_name.unwrap_or("").to_string(),
+            symmetric,
         };
         let r = self.client.register_compact_edge_type(req).await.map_err(ClientError::from)?;
         Ok(r.into_inner().edge_type_id)
@@ -121,12 +126,16 @@ impl SchemaClient {
     /// Uses the 8-byte `StaticEdgePayload` (value + last_seen only). No activity bitmap,
     /// no bins, no tx_count. Ideal for similarity scores or any float-tagged relationship.
     /// Register with `state_ttl_secs > 0` for automatic TTL-based expiry.
+    ///
+    /// `symmetric`: when true, edges are undirected — upserts normalize to (min,max) and
+    /// neighbor queries return out ∪ in. Requires `from_node_type == to_node_type`.
     pub async fn register_static_edge_type(
         &mut self,
         name:            &str,
         from_node_type:  &str,
         to_node_type:    &str,
         state_ttl_secs:  u64,
+        symmetric:       bool,
     ) -> Result<u32, ClientError> {
         let req = schema_proto::CompactEdgeTypeSpec {
             name: name.to_string(),
@@ -140,6 +149,7 @@ impl SchemaClient {
             }),
             minimal_payload: true,
             bool_property: String::new(), // static edge types cannot have a bool property
+            symmetric,
         };
         let r = self.client.register_compact_edge_type(req).await.map_err(ClientError::from)?;
         Ok(r.into_inner().edge_type_id)
@@ -172,6 +182,7 @@ impl SchemaClient {
                 state_ttl_secs: e.state_ttl_secs,
                 tick_size_secs: e.tick_size_secs,
                 bool_property: if e.bool_property.is_empty() { None } else { Some(e.bool_property) },
+                is_symmetric: e.is_symmetric,
             }).collect(),
         })
     }
@@ -205,4 +216,7 @@ pub struct EdgeTypeInfo {
     /// Name of the single boolean property stored in bit 63 of the flags field.
     /// `None` when this edge type has no boolean property defined.
     pub bool_property: Option<String>,
+    /// True when the edge type was registered as symmetric (undirected).
+    /// Upserts normalize to (min(src,dst), max(src,dst)) and queries return out ∪ in.
+    pub is_symmetric: bool,
 }

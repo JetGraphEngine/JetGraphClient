@@ -400,6 +400,7 @@ known_node_types={:?}\nknown_edge_types={:?}",
             "amount",
             3_600,
             None,
+            false,
         )
         .await?;
     }

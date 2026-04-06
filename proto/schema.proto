@@ -55,6 +55,11 @@ message CompactEdgeTypeSpec {
     // Cannot be used with minimal_payload = true (static edge types have no flags field).
     // Empty string = no boolean property.
     string bool_property = 10;
+
+    // If true, edges are undirected: upserts normalize to (min(src,dst), max(src,dst))
+    // storing one canonical payload row per pair. Neighbor queries return out ∪ in neighbors.
+    // Requires from_node_type == to_node_type. Defaults to false.
+    bool symmetric = 11;
 }
 
 message ActivityBitmapConfig {
@@ -111,6 +116,8 @@ message EdgeTypeInfo {
     uint64 tick_size_secs = 6;
     // The name of the single boolean property stored in bit 63 of flags, or empty if none.
     string bool_property  = 7;
+    // True when this edge type was registered as symmetric (undirected).
+    bool is_symmetric     = 8;
 }
 
 message PropertyInfo {

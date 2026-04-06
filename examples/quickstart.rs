@@ -236,7 +236,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         ("HAS_CARD", "account", "card"),
         ("CARD_TO_BIN", "card", "bin"),
     ] {
-        s.register_compact_edge_type(name, from, to, 0, vec![], "", 3_600, None)
+        s.register_compact_edge_type(name, from, to, 0, vec![], "", 3_600, None, false)
             .await?;
         println!("  edge type: {name}");
     }
@@ -259,6 +259,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         "amount",
         3_600, // 1-hour tick granularity
         None,
+        false,
     )
     .await?;
     println!("  edge type: TRANSACTS_AT");
@@ -276,6 +277,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         "",
         300, // 5-minute tick granularity
         None,
+        false,
     )
     .await?;
     println!("  edge type: USES_DEVICE  [activity-bitmap 5m]");
@@ -293,6 +295,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         "",
         300, // 5-minute tick granularity
         None,
+        false,
     )
     .await?;
     println!("  edge type: USES_IP      [activity-bitmap 5m]");
@@ -309,6 +312,7 @@ async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         "",
         3_600, // 1-hour ticks
         None,
+        false,
     )
     .await?;
     println!("  edge type: LINKED_ACCT");

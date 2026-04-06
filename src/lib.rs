@@ -50,7 +50,7 @@
 //!     let mut client = Client::connect("http://localhost:50051").await?;
 //!
 //!     // Register SIMILAR_TO with 24h TTL and minimal 8-byte payload.
-//!     client.register_static_edge_type("SIMILAR_TO", "card", "card", 86400).await?;
+    //!     client.register_static_edge_type("SIMILAR_TO", "card", "card", 86400, true).await?;
 //!     client.schema().finalize().await?;
 //!
 //!     // Batch-build with per-type weights.
@@ -276,14 +276,16 @@ impl Client {
     /// Uses an 8-byte payload (f32 score + u32 timestamp per pair). No activity bitmap,
     /// no bins, no tx_count. `state_ttl_secs` controls automatic TTL expiry (0 = permanent).
     /// Must be called before `schema().finalize()`.
+    /// `symmetric`: when true edges are undirected — requires `from_node_type == to_node_type`.
     pub async fn register_static_edge_type(
         &self,
         name:           &str,
         from_node_type: &str,
         to_node_type:   &str,
         state_ttl_secs: u64,
+        symmetric:      bool,
     ) -> Result<u32, ClientError> {
-        self.schema().register_static_edge_type(name, from_node_type, to_node_type, state_ttl_secs).await
+        self.schema().register_static_edge_type(name, from_node_type, to_node_type, state_ttl_secs, symmetric).await
     }
 
     /// Find the top-k most similar nodes to `node` using weighted per-type Jaccard.
