@@ -192,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ready = client.health().check().await?;
     println!("Engine ready: {ready}");
-    assert!(ready, "Engine is not READY — start the Fraud Graph Engine first");
+    assert!(ready, "Engine is not READY — start JetGraph first");
 
     println!("\n[1/6] Schema registration");
     setup_schema(&client).await?;

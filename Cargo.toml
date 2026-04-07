@@ -3,7 +3,7 @@ name = "fraud-graph-client"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.83"
-description = "Rust gRPC client library for the Fraud Graph Engine (compact edge model)"
+description = "Rust gRPC client library for JetGraph (compact edge model)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/your-org/FraudManagement"
 readme = "README.md"
@@ -34,6 +34,10 @@ path = "examples/grpc_load_test.rs"
 [[example]]
 name = "ingest_transaction"
 path = "examples/ingest_transaction.rs"
+
+[[example]]
+name = "complete_guide"
+path = "examples/complete_guide.rs"
 
 [build-dependencies]
 tonic-build = "0.12.3"

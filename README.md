@@ -1,6 +1,6 @@
 # Rust Graph Client (`fraud-graph-client`)
 
-Standalone Rust library for talking to the **Fraud Graph Engine** over gRPC. This crate vendors the `.proto` files under `proto/`, so you can copy or publish this project by itself—consumers only need Rust, `protoc` (for build), and a running engine.
+Standalone Rust library for talking to **JetGraph** over gRPC. This crate vendors the `.proto` files under `proto/`, so you can copy or publish this project by itself—consumers only need Rust, `protoc` (for build), and a running engine.
 
 The engine implementation lives in the sibling [`Graph`](../Graph) repository.
 

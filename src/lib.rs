@@ -1,6 +1,6 @@
 //! # Fraud Graph Client
 //!
-//! Rust client library for the Fraud Graph Engine. Connect to the engine via gRPC
+//! Rust client library for JetGraph. Connect to the engine via gRPC
 //! and perform schema registration, node/edge operations, and feature queries.
 //!
 //! ## Quick start
@@ -116,7 +116,7 @@ pub use schema::schema_proto::ValueType;
 use tonic::transport::Channel;
 use std::time::Duration;
 
-/// Unified client for all Fraud Graph Engine services.
+/// Unified client for all JetGraph services.
 ///
 /// Holds a shared gRPC channel and provides access to graph, schema, feature,
 /// and health operations.
