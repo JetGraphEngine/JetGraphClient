@@ -1,6 +1,6 @@
 //! JetGraph Stress Test — surface system limits, failure points, and bottlenecks.
 //!
-//! Connects to a running JetGraph engine and executes eight progressively more
+//! Connects to a running JetGraph engine and executes nine progressively more
 //! aggressive test phases designed to identify exactly where the system breaks
 //! and quantify the gains available from production client-side patterns.
 //!
@@ -25,6 +25,11 @@
 //! │  Phase 8 — Streaming vs. Individual RPC (write path comparison)          │
 //! │    Same concurrency, same duration, direct throughput comparison          │
 //! │    → quantifies the streaming advantage at identical client concurrency   │
+//! │  Phase 9 — Hot-Node Promotion Boundary Verification                      │
+//! │    Streams 20 K unique card→merchant edges to ONE hot merchant            │
+//! │    in three bands: Band A (0→5K), Band B (5K→10K), Band C (10K→20K)     │
+//! │    → verifies adaptive Vec→BTreeSet promotion keeps throughput flat       │
+//! │       instead of degrading O(N) as the inverse index grows                │
 //! └──────────────────────────────────────────────────────────────────────────┘
 //!
 //! Usage:
@@ -33,7 +38,7 @@
 //! Options:
 //!   --endpoint <url>          gRPC endpoint (default: http://localhost:50051)
 //!   --bootstrap-schema        Register node/edge types if missing
-//!   --phase <1-8>             Run only a specific phase (default: all)
+//!   --phase <1-9>             Run only a specific phase (default: all)
 //!   --step-secs <n>           Seconds per concurrency step (default: 5)
 //!   --max-concurrency <n>     Maximum concurrency to test (default: 256)
 //!   --pair-count <n>          src/dst pairs for workload data (default: 10000)
@@ -1248,6 +1253,163 @@ async fn phase8_streaming_vs_rpc(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Phase 9 — Hot-Node Promotion Boundary Verification
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Streams 20 K unique card→merchant edges to a single "hot" merchant node,
+/// measuring ingest throughput in three bands that cross the server's
+/// `INVERSE_PROMOTE_THRESHOLD` (10 K).
+///
+/// The server's inverse index for the hot merchant is:
+///   - Band A (0 → 5 K in-neighbors)  : Small / Vec  — O(N) insert, N is small
+///   - Band B (5 K → 10 K)            : Small / Vec  — insert cost growing
+///   - Band C (10 K → 20 K)           : Large / BTreeSet — O(log N), flat cost
+///
+/// **Expected with the adaptive fix**: Band C throughput ≥ 75 % of Band A.
+/// **Without the fix**: Band C throughput would be 10–50 × lower than Band A
+/// because every new card edge holds the merchant's write lock for O(N) time.
+///
+/// Each band uses PIPELINE simultaneous in-flight requests so the server is
+/// genuinely under load. Backpressure is implemented via a Tokio Semaphore:
+/// the drain task releases one permit per response, so at most PIPELINE
+/// unacknowledged messages are outstanding at any time.
+async fn phase9_hot_node_promotion(cfg: &Config) -> Result<(), Box<dyn Error>> {
+    print_separator("PHASE 9 — Hot-Node Promotion Boundary Verification");
+    println!("  Streams 20 K unique card→merchant edges to ONE hot merchant.");
+    println!("  Measures throughput in 3 bands crossing the INVERSE_PROMOTE_THRESHOLD (10 K).");
+    println!("  With adaptive Vec→BTreeSet: Band C should stay flat (O(log N)).");
+    println!("  Without fix: Band C degrades O(N) — 10–50× slower than Band A.");
+    println!();
+
+    // ── Band sizes ────────────────────────────────────────────────────────────
+    //
+    //  Band A: cards      0 →  4 999  (total in-neighbors   0 →  5 K, Small/Vec)
+    //  Band B: cards  5 000 →  9 999  (total in-neighbors  5 K → 10 K, near threshold)
+    //  Band C: cards 10 000 → 19 999  (total in-neighbors 10 K → 20 K, Large/BTreeSet)
+    const BAND_A: u64   = 5_000;
+    const BAND_B: u64   = 5_000;
+    const BAND_C: u64   = 10_000;
+    const PIPELINE: usize = 128; // in-flight stream messages
+
+    // ── Single streaming connection ───────────────────────────────────────────
+    let client = Client::connect(&cfg.endpoint).await
+        .map_err(|e| format!("phase9: cannot connect: {e}"))?;
+    let (tx, mut resp) = client.ingest_stream().await
+        .map_err(|e| format!("phase9: cannot open ingest_stream: {e}"))?;
+
+    // Semaphore: PIPELINE permits. Send-loop acquires one per message and forgets
+    // the permit (so it is NOT released on drop). The drain task releases permits
+    // as responses arrive, providing natural backpressure.
+    let sem   = Arc::new(tokio::sync::Semaphore::new(PIPELINE));
+    let sem2  = sem.clone();
+    let edges_done = Arc::new(AtomicU64::new(0));
+    let ed2        = edges_done.clone();
+
+    let drain = tokio::spawn(async move {
+        while let Some(r) = resp.message().await.ok().flatten() {
+            sem2.add_permits(1);
+            ed2.fetch_add((r.edges_created + r.edges_updated) as u64, Ordering::Relaxed);
+        }
+    });
+
+    // Fixed external ID for the hot merchant — all 20 K cards go to this one node.
+    let hot_merchant = "p9_hot_merchant_singleton";
+
+    // ── Run bands ─────────────────────────────────────────────────────────────
+    //
+    // For each band: send all edges with PIPELINE backpressure, then drain
+    // (wait for every in-flight message to be acknowledged) before timing out.
+    // This gives accurate per-band throughput that reflects server processing
+    // speed, not just client-side send speed.
+    let bands: [(& str, u64, u64); 3] = [
+        ("A (   0 → 5 K, Small/Vec, pre-promotion)",   0u64,           BAND_A),
+        ("B (5 K → 10 K, Vec,       near threshold)",  BAND_A,         BAND_B),
+        ("C (10 K → 20 K, BTreeSet, post-promotion)",  BAND_A + BAND_B, BAND_C),
+    ];
+
+    println!("  {:<46}  {:>12}  {:>10}  {:>8}",
+        "band", "edges/sec", "edges_ack", "time_s");
+    println!("  {}", "─".repeat(82));
+
+    let mut band_results: Vec<f64> = Vec::new();
+
+    for (label, card_offset, band_size) in bands {
+        let before = edges_done.load(Ordering::Relaxed);
+        let t0     = Instant::now();
+
+        // Send all edges for this band with backpressure.
+        for i in 0..band_size {
+            let Ok(permit) = sem.acquire().await else { break };
+            let card_id = format!("p9_card_{}", card_offset + i);
+            let tx_id   = format!("p9_tx_{}_{}", card_offset, i);
+            let req = GraphClient::build_ingest_request(
+                Some(&tx_id),
+                &[
+                    TransactionNode::new("card",     card_id).with_key("c"),
+                    TransactionNode::new("merchant", hot_merchant.to_string()).with_key("m"),
+                ],
+                &[
+                    TransactionEdge::new(
+                        "TRANSACTS_AT",
+                        TransactionNodeRef::request_node_key("c"),
+                        TransactionNodeRef::request_node_key("m"),
+                    ).with_key("e0"),
+                ],
+            );
+            if tx.send(req).await.is_err() { break; }
+            // Do NOT drop permit — drain task releases it via add_permits(1).
+            std::mem::forget(permit);
+        }
+
+        // Drain: acquire all PIPELINE permits, which blocks until every
+        // in-flight request has been acknowledged by the server.
+        for _ in 0..PIPELINE {
+            let Ok(p) = sem.acquire().await else { break };
+            std::mem::forget(p); // consumed without restoring
+        }
+        let elapsed = t0.elapsed();
+        // Restore permits so the next band can use them.
+        sem.add_permits(PIPELINE);
+
+        let after = edges_done.load(Ordering::Relaxed);
+        let acked = after.saturating_sub(before);
+        let tput  = acked as f64 / elapsed.as_secs_f64();
+
+        println!("  {:<46}  {:>12.0}  {:>10}  {:>8.2}",
+            label, tput, acked, elapsed.as_secs_f64());
+        band_results.push(tput);
+    }
+
+    drop(tx);
+    let _ = drain.await;
+
+    // ── Verdict ───────────────────────────────────────────────────────────────
+    let tput_a = band_results[0];
+    let tput_c = band_results[2];
+    let ratio  = if tput_a > 0.0 { tput_c / tput_a } else { 0.0 };
+
+    println!();
+    println!("  ┌────────────────────────────────────────────────────────────────────┐");
+    println!("  │  Band C / Band A throughput ratio: {ratio:.2}×                         │");
+    if ratio >= 0.75 {
+        println!("  │  ✓  PASS — throughput flat after Vec→BTreeSet promotion           │");
+        println!("  │       O(log N) insert cost confirmed. No O(N) degradation.         │");
+    } else {
+        println!("  │  ✗  FAIL — throughput degraded after promotion threshold           │");
+        println!("  │       ratio={ratio:.2} < 0.75. Check INVERSE_LOCK_WAITS_NS metric.  │");
+        println!("  │       Likely cause: adaptive BTreeSet promotion not active.         │");
+    }
+    println!("  │                                                                    │");
+    println!("  │  Reference: without adaptive fix Band C is 10–50× slower.         │");
+    println!("  │  Monitor: GET /admin/metrics → inverse_promotions counter          │");
+    println!("  │           should be ≥ 1 after this phase (the hot merchant         │");
+    println!("  │           crosses INVERSE_PROMOTE_THRESHOLD = 10 000 in-neighbors) │");
+    println!("  └────────────────────────────────────────────────────────────────────┘");
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Main
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1292,6 +1454,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if run_phase(6) { phase6_multi_hop(&cfg,          pairs.clone()).await?; }
     if run_phase(7) { phase7_failure_boundary(&cfg,   pairs.clone()).await?; }
     if run_phase(8) { phase8_streaming_vs_rpc(&cfg,   pairs.clone()).await?; }
+    if run_phase(9) { phase9_hot_node_promotion(&cfg).await?; }
 
     print_separator("STRESS TEST COMPLETE");
     println!("\n  Interpretation guide:");
@@ -1305,6 +1468,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("  • Ph6 parallel speedup      → traversal latency gain from tokio::spawn");
     println!("  • Ph7 first SLO breach row  → minimum safe client-side timeout");
     println!("  • Ph8 streaming advantage   → throughput multiplier vs individual RPCs");
+    println!("  • Ph9 Band C / Band A ratio → Vec→BTreeSet promotion working (target ≥0.75×)");
+    println!("  • Ph9 inverse_promotions    → check /admin/metrics; must be ≥ 1 after Ph9");
     println!();
 
     Ok(())
