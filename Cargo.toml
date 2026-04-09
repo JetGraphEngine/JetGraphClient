@@ -39,6 +39,10 @@ path = "examples/ingest_transaction.rs"
 name = "complete_guide"
 path = "examples/complete_guide.rs"
 
+[[example]]
+name = "stress_test"
+path = "examples/stress_test.rs"
+
 [build-dependencies]
 tonic-build = "0.12.3"
 # prost-build pulls `tempfile`; 3.11+ depends on getrandom 0.4 which needs Cargo edition2024 support.
