@@ -222,11 +222,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn setup_schema(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     let mut s = client.schema();
 
-    // Node types
+    // Node types — all registered with string external IDs (numeric_ids: false)
+    // because demo data uses human-readable identifiers like "card-001", "ip-dc-001".
     for nt in &[
         "customer", "account", "card", "device", "ip", "bin", "merchant",
     ] {
-        s.register_node_type(nt).await?;
+        s.register_node_type(nt, false).await?;
         println!("  node type: {nt}");
     }
 
