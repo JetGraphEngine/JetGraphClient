@@ -50,7 +50,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio_stream::StreamExt;
 
-use fraud_graph_client::{
+use jetgraph_client::{
     // Core client
     Client,
     GraphClient,
@@ -1036,7 +1036,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "TRANSACTS_AT",
         0,      // hours
         30,     // days
-        fraud_graph_client::HistogramField::TotalEvents,
+        jetgraph_client::HistogramField::TotalEvents,
     ).await?;
     println!("  events_30d={}", spend_30d);
 

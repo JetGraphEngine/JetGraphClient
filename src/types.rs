@@ -7,7 +7,7 @@
 ///
 /// # Example
 /// ```
-/// use fraud_graph_client::EdgeTypeWeight;
+/// use jetgraph_client::EdgeTypeWeight;
 /// let weights = vec![
 ///     EdgeTypeWeight::new("TRANSACTS_AT", 0.5),
 ///     EdgeTypeWeight::new("USES_DEVICE",  0.3),

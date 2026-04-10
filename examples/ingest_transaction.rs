@@ -4,7 +4,7 @@
 //! - node types: card, merchant
 //! - edge type: TRANSACTS_AT (card -> merchant)
 
-use fraud_graph_client::{
+use jetgraph_client::{
     Client, NodeRef, TransactionNode, TransactionNodeRef, TransactionEdge,
 };
 

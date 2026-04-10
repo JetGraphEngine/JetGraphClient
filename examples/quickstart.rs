@@ -52,7 +52,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::Semaphore;
 
-use fraud_graph_client::{Client, NodeRef, PropertyEntry, PropertyValue, ValueType};
+use jetgraph_client::{Client, NodeRef, PropertyEntry, PropertyValue, ValueType};
 
 /// Max concurrent in-flight gRPC calls during bulk data load.
 const CONCURRENCY: usize = 64;

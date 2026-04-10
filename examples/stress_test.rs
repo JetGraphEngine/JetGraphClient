@@ -51,7 +51,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use fraud_graph_client::{
+use jetgraph_client::{
     Client, GraphClient, NodeRef,
     TransactionEdge, TransactionNode, TransactionNodeRef,
 };
@@ -326,7 +326,7 @@ async fn build_workload_pairs(
                 let dst = c.create_node("merchant", Some(&format!("stress-merch-{idx:08}")), &[]).await?;
                 results.lock().unwrap()[idx] = Some((src.node_id, dst.node_id));
             }
-            Ok::<(), fraud_graph_client::ClientError>(())
+            Ok::<(), jetgraph_client::ClientError>(())
         }));
     }
     for h in handles { h.await??; }

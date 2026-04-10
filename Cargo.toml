@@ -1,5 +1,5 @@
 [package]
-name = "fraud-graph-client"
+name = "jetgraph-client"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.83"
@@ -7,11 +7,11 @@ description = "Rust gRPC client library for JetGraph (compact edge model)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/your-org/FraudManagement"
 readme = "README.md"
-keywords = ["fraud", "graph", "grpc", "client"]
+keywords = ["jetgraph", "graph", "grpc", "client"]
 categories = ["network-programming", "database"]
 
 [lib]
-name = "fraud_graph_client"
+name = "jetgraph_client"
 path = "src/lib.rs"
 
 [dependencies]

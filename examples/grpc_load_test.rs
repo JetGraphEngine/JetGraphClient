@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use fraud_graph_client::{Client, NodeRef};
+use jetgraph_client::{Client, NodeRef};
 
 #[derive(Clone, Copy, Debug)]
 enum Mode {
@@ -317,7 +317,7 @@ async fn prepare_workload_data(client: &Client, cfg: &Config) -> Result<Workload
                 let dst = c.create_node(&cfg.dst_type, Some(&dst_ext), &[]).await?;
                 out.push((idx, src.node_id, dst.node_id));
             }
-            Ok::<Vec<(usize, u64, u64)>, fraud_graph_client::ClientError>(out)
+            Ok::<Vec<(usize, u64, u64)>, jetgraph_client::ClientError>(out)
         }));
     }
 
@@ -457,7 +457,7 @@ async fn warmup_upsert(client: &Client, cfg: &Config, data: &WorkloadData) -> Re
                 let ts = now_secs().saturating_sub(offset);
                 c.upsert_edge(&cfg.edge_type, src, dst, Some(val), Some(ts), None).await?;
             }
-            Ok::<(), fraud_graph_client::ClientError>(())
+            Ok::<(), jetgraph_client::ClientError>(())
         }));
     }
     for j in joins {
@@ -488,7 +488,7 @@ async fn warmup_query(client: &Client, cfg: &Config, data: &WorkloadData) -> Res
                 let (src, dst) = pair_for(req_idx, &cfg, &pairs);
                 c.get_edge_state(&cfg.edge_type, src, dst, None, None).await?;
             }
-            Ok::<(), fraud_graph_client::ClientError>(())
+            Ok::<(), jetgraph_client::ClientError>(())
         }));
     }
     for j in joins {

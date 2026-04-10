@@ -6,7 +6,7 @@
 //! ## Quick start
 //!
 //! ```no_run
-//! use fraud_graph_client::{Client, NodeRef};
+//! use jetgraph_client::{Client, NodeRef};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,7 +43,7 @@
 //! then build or query similarity in real time:
 //!
 //! ```no_run
-//! use fraud_graph_client::{Client, EdgeTypeWeight, NodeRef};
+//! use jetgraph_client::{Client, EdgeTypeWeight, NodeRef};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -130,7 +130,7 @@ impl Client {
     ///
     /// # Example
     /// ```no_run
-    /// # use fraud_graph_client::Client;
+    /// # use jetgraph_client::Client;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::connect("http://localhost:50051").await?;
@@ -227,7 +227,7 @@ impl Client {
     ///
     /// # Example
     /// ```no_run
-    /// # use fraud_graph_client::{Client, GraphClient, TransactionEdge, TransactionNodeRef, NodeRef};
+    /// # use jetgraph_client::{Client, GraphClient, TransactionEdge, TransactionNodeRef, NodeRef};
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::connect("http://localhost:50051").await?;

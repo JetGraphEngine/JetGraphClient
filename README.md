@@ -23,7 +23,7 @@ The engine implementation lives in the sibling [`Graph`](../Graph) repository.
 
 ```toml
 [dependencies]
-fraud-graph-client = { path = "../RustGraphClient" }
+jetgraph-client = { path = "../RustGraphClient" }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -31,7 +31,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 [dependencies]
-fraud-graph-client = { git = "https://github.com/your-org/your-repo.git", branch = "main", path = "RustGraphClient" }
+jetgraph-client = { git = "https://github.com/your-org/your-repo.git", branch = "main", path = "RustGraphClient" }
 ```
 
 Or publish to a private registry / crates.io and depend by version.
@@ -69,7 +69,7 @@ Query → Score/Process → Insert
 3. **Insert** — always write the event edge, even if the outcome is negative (the graph needs full history for accurate future signals)
 
 ```rust
-use fraud_graph_client::{
+use jetgraph_client::{
     GraphClient, CreateEdgeRequest, VelocityQuery, FraudContextQuery, FlagRequest, prop,
 };
 
