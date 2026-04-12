@@ -201,6 +201,38 @@ High-concurrency sustained load test for stability and memory profiling under re
 cargo run --example stress_test
 ```
 
+### `scale_growth_test`
+
+Progressive scale test that loads up to **30 million nodes** across three node types (`user`, `product`, `device`) and up to **10 million edges** (`VIEWS`, `PURCHASES`, `USES_DEVICE`), pausing at regular checkpoints to measure how query latency and write throughput change as the graph grows. Identifies the breaking point where performance degrades.
+
+```bash
+# Quick run (1 M nodes, 1 M edges)
+cargo run --release --example scale_growth_test -- --bootstrap-schema
+
+# Full 30 M node / 10 M edge run
+cargo run --release --example scale_growth_test -- \
+  --bootstrap-schema \
+  --user-count    15000000 \
+  --product-count 10000000 \
+  --device-count   5000000 \
+  --edge-count    10000000 \
+  --checkpoint-every 1000000 \
+  --concurrency 64 \
+  --probe-iters 200
+```
+
+At each checkpoint the test prints a latency table across five query types:
+
+| Query type | What it measures |
+|---|---|
+| `edge_state` | Point lookup — does this user→product edge exist? |
+| `edge_state+windows` | Same + activity counts for last 1 h and 24 h windows |
+| `neighbors_out_50` | Outbound VIEWS neighbours of a user (top 50) |
+| `neighbors_in_50` | Inbound VIEWS to a product (top 50 users who viewed it) |
+| `two_hop` | User → products → other users who viewed those products |
+
+A ⚠ warning is printed when `p99 > 10 ms` or `error_rate > 1 %`. The final summary table shows all checkpoints side-by-side to reveal exactly where performance degraded and at what node/edge count.
+
 ---
 
 ## API Overview
