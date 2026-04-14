@@ -51,7 +51,7 @@ use jetgraph_client::{Client, GraphClient, PropertyEntry, TransactionEdge,
 /// Number of CSV rows packed into a single gRPC request.
 /// Engine caps: 1 024 nodes / 4 096 edges per request.
 /// Each row contributes 6 nodes + 6 edges → 100 rows = 600 nodes + 600 edges.
-const ROWS_PER_REQUEST: usize = 100;
+const ROWS_PER_REQUEST: usize = 150;
 
 /// Bounded channel depth.  WORKERS × 4 keeps the pipeline full while bounding
 /// memory when the engine is slower than the CSV parser.
