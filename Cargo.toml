@@ -23,6 +23,9 @@ prost-types  = "0.13.5"
 thiserror    = "1"
 anyhow       = "1"
 
+[dev-dependencies]
+csv = "1"
+
 [[example]]
 name = "quickstart"
 path = "examples/quickstart.rs"
@@ -46,6 +49,10 @@ path = "examples/stress_test.rs"
 [[example]]
 name = "scale_growth_test"
 path = "examples/scale_growth_test.rs"
+
+[[example]]
+name = "csv_ingest"
+path = "examples/csv_ingest.rs"
 
 [build-dependencies]
 tonic-build = "0.12.3"
