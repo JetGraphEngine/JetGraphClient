@@ -225,45 +225,55 @@ pub struct CreateNodeResult {
 /// For static (minimal-payload) edges such as SIMILAR_TO:
 /// - `approx_sum` carries the stored float value (e.g. the Jaccard score).
 /// - `tx_count` is always 1 (no accumulation).
-/// - `activity_bitmap_raw` and `bins` are always 0.
+/// - `activity_bitmap` and `bins` are always 0 / `[0; 8]`.
 #[derive(Debug, Clone)]
 pub struct UpsertEdgeResult {
     pub created_new: bool,
     pub tx_count: u32,
-    /// For static edges this holds the stored float value (e.g. Jaccard score).
+    /// Accumulated numeric value (or, for static edges, the stored float score).
     pub approx_sum: f32,
+    /// Unix timestamp (seconds) of the last event on this edge.
     pub last_seen: u32,
-    /// Raw 64-bit activity bitmap value (bits 0-62). Always 0 for static edge types.
-    pub activity_bitmap_raw: u64,
-    /// Per-bin transaction counts (8 bins). Always [0; 8] for static edge types.
+    /// Sliding activity window bitmap. Non-zero only for compact edge types
+    /// that have activity tracking enabled; always 0 for static edges.
+    pub activity_bitmap: u64,
+    /// Per-range transaction counts across the numeric value histogram bins.
+    /// Always `[0; 8]` for static edge types.
     pub bins: [u16; 8],
-    /// Value of the edge type's single boolean property (bit 63 of internal flags).
-    /// `None` when the edge type has no bool_property defined in its schema.
+    /// Value of the edge type's boolean property, if one is registered.
+    /// `None` when the edge type has no boolean property in its schema.
     pub bool_flag: Option<bool>,
 }
 
-/// Edge state from GetEdgeState.
+/// State of a single edge returned by `get_edge_state`.
 ///
 /// For static (minimal-payload) edges such as SIMILAR_TO:
 /// - `approx_sum` holds the stored float value (e.g. the Jaccard similarity score).
 /// - `tx_count` is always 1.
-/// - `activity_bitmap_raw` and `bins` are always 0.
+/// - `activity_bitmap` and `bins` are always 0 / `[0; 8]`.
 #[derive(Debug, Clone)]
 pub struct EdgeState {
     pub found: bool,
     pub tx_count: u32,
-    /// For static edges this holds the stored float value (e.g. Jaccard score).
+    /// Accumulated numeric value (or, for static edges, the stored float score).
     pub approx_sum: f32,
+    /// Unix timestamp (seconds) of the last event on this edge.
     pub last_seen: u32,
-    /// Raw 64-bit activity bitmap value (bits 0-62). Always 0 for static edge types.
-    pub activity_bitmap_raw: u64,
-    /// Per-bin transaction counts (8 bins). Always [0; 8] for static edge types.
+    /// Sliding activity window bitmap. Non-zero only for compact edge types
+    /// that have activity tracking enabled; always 0 for static edges.
+    pub activity_bitmap: u64,
+    /// Per-range transaction counts across the numeric value histogram bins.
+    /// Always `[0; 8]` for static edge types.
     pub bins: [u16; 8],
+    /// Event count matching the optional min/max value filter supplied to `get_edge_state`.
     pub filtered_count: u32,
+    /// Accumulated value for events matching the optional value filter.
     pub filtered_approx_sum: f32,
+    /// Event counts for each activity window (in the same order as the windows
+    /// supplied to `get_edge_state`). Empty when no windows were requested.
     pub activity_counts: Vec<u32>,
-    /// Value of the edge type's single boolean property (bit 63 of internal flags).
-    /// `None` when the edge type has no bool_property defined in its schema.
+    /// Value of the edge type's boolean property, if one is registered.
+    /// `None` when the edge type has no boolean property in its schema.
     pub bool_flag: Option<bool>,
 }
 

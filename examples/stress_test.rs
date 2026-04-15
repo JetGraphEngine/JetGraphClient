@@ -52,7 +52,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use jetgraph_client::{
-    Client, GraphClient, NodeRef,
+    Client, NodeRef,
     TransactionEdge, TransactionNode, TransactionNodeRef,
 };
 
@@ -612,7 +612,7 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
                     };
 
                     // Open bidirectional stream with backoff on failure.
-                    let (tx, mut resp) = match client.ingest_stream().await {
+                    let (tx, resp) = match client.ingest_stream().await {
                         Ok(p)  => p,
                         Err(e) => {
                             eprintln!("  [w{wid}] ingest_stream: {e}, retry");
@@ -633,7 +633,8 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
                     // Drain responses in a separate task, returning permits.
                     let drain = tokio::spawn(async move {
                         let mut t_prev = Instant::now();
-                        while let Some(r) = resp.message().await.ok().flatten() {
+                        let mut responses = resp;
+                        while let Some(Ok(r)) = responses.next().await {
                             sem2.add_permits(1);
                             te2.fetch_add((r.edges_created + r.edges_updated) as u64, Ordering::Relaxed);
                             tt2.fetch_add(1, Ordering::Relaxed);
@@ -664,26 +665,22 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
                         let val         = 1.0 + (seq % 500) as f32;
                         let ts          = now_secs().saturating_sub((seq as u32) % 86_400);
 
-                        let mut req = GraphClient::build_ingest_request(
+                        let mut edge = TransactionEdge::new(
+                            "TRANSACTS_AT",
+                            TransactionNodeRef::request_node_key("c"),
+                            TransactionNodeRef::request_node_key("m"),
+                        ).with_key("e0");
+                        edge.numeric_value = Some(val);
+                        edge.event_ts_secs = Some(ts);
+
+                        if tx.send(
                             Some(&tx_id),
                             &[
                                 TransactionNode::new("card",     card_id.to_string()).with_key("c"),
                                 TransactionNode::new("merchant", merchant_id.to_string()).with_key("m"),
                             ],
-                            &[
-                                TransactionEdge::new(
-                                    "TRANSACTS_AT",
-                                    TransactionNodeRef::request_node_key("c"),
-                                    TransactionNodeRef::request_node_key("m"),
-                                ).with_key("e0"),
-                            ],
-                        );
-                        if let Some(edge) = req.edges.first_mut() {
-                            edge.numeric_value = Some(val);
-                            edge.event_ts_secs = Some(ts);
-                        }
-
-                        if tx.send(req).await.is_err() {
+                            &[edge],
+                        ).await.is_err() {
                             // Server closed the stream — reconnect.
                             break true;
                         }
@@ -1150,7 +1147,7 @@ async fn phase8_streaming_vs_rpc(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
                         continue;
                     }
                 };
-                let (tx, mut resp) = match client.ingest_stream().await {
+                let (tx, resp) = match client.ingest_stream().await {
                     Ok(p)  => p,
                     Err(_) => {
                         tokio::time::sleep(backoff).await;
@@ -1165,7 +1162,8 @@ async fn phase8_streaming_vs_rpc(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
                 let st2  = st.clone();
 
                 let drain = tokio::spawn(async move {
-                    while let Some(r) = resp.message().await.ok().flatten() {
+                    let mut responses = resp;
+                    while let Some(Ok(r)) = responses.next().await {
                         sem2.add_permits(1);
                         se2.fetch_add((r.edges_created + r.edges_updated) as u64, Ordering::Relaxed);
                         st2.fetch_add(1, Ordering::Relaxed);
@@ -1186,26 +1184,22 @@ async fn phase8_streaming_vs_rpc(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
                     let val         = 1.0 + (seq % 500) as f32;
                     let ts          = now_secs().saturating_sub((seq as u32) % 86_400);
 
-                    let mut req = GraphClient::build_ingest_request(
+                    let mut edge = TransactionEdge::new(
+                        "TRANSACTS_AT",
+                        TransactionNodeRef::request_node_key("c"),
+                        TransactionNodeRef::request_node_key("m"),
+                    ).with_key("e0");
+                    edge.numeric_value = Some(val);
+                    edge.event_ts_secs = Some(ts);
+
+                    if tx.send(
                         Some(&tx_id),
                         &[
                             TransactionNode::new("card",     card_id.to_string()).with_key("c"),
                             TransactionNode::new("merchant", merchant_id.to_string()).with_key("m"),
                         ],
-                        &[
-                            TransactionEdge::new(
-                                "TRANSACTS_AT",
-                                TransactionNodeRef::request_node_key("c"),
-                                TransactionNodeRef::request_node_key("m"),
-                            ).with_key("e0"),
-                        ],
-                    );
-                    if let Some(edge) = req.edges.first_mut() {
-                        edge.numeric_value = Some(val);
-                        edge.event_ts_secs = Some(ts);
-                    }
-
-                    if tx.send(req).await.is_err() { break true; }
+                        &[edge],
+                    ).await.is_err() { break true; }
                     std::mem::forget(permit);
                     total_seq += 1;
                 };
@@ -1294,7 +1288,7 @@ async fn phase9_hot_node_promotion(cfg: &Config) -> Result<(), Box<dyn Error>> {
     // ── Single streaming connection ───────────────────────────────────────────
     let client = Client::connect(&cfg.endpoint).await
         .map_err(|e| format!("phase9: cannot connect: {e}"))?;
-    let (tx, mut resp) = client.ingest_stream().await
+    let (tx, resp) = client.ingest_stream().await
         .map_err(|e| format!("phase9: cannot open ingest_stream: {e}"))?;
 
     // Semaphore: PIPELINE permits. Send-loop acquires one per message and forgets
@@ -1306,7 +1300,8 @@ async fn phase9_hot_node_promotion(cfg: &Config) -> Result<(), Box<dyn Error>> {
     let ed2        = edges_done.clone();
 
     let drain = tokio::spawn(async move {
-        while let Some(r) = resp.message().await.ok().flatten() {
+        let mut responses = resp;
+        while let Some(Ok(r)) = responses.next().await {
             sem2.add_permits(1);
             ed2.fetch_add((r.edges_created + r.edges_updated) as u64, Ordering::Relaxed);
         }
@@ -1342,7 +1337,7 @@ async fn phase9_hot_node_promotion(cfg: &Config) -> Result<(), Box<dyn Error>> {
             let Ok(permit) = sem.acquire().await else { break };
             let card_id = format!("p9_card_{}", card_offset + i);
             let tx_id   = format!("p9_tx_{}_{}", card_offset, i);
-            let req = GraphClient::build_ingest_request(
+            if tx.send(
                 Some(&tx_id),
                 &[
                     TransactionNode::new("card",     card_id).with_key("c"),
@@ -1355,8 +1350,7 @@ async fn phase9_hot_node_promotion(cfg: &Config) -> Result<(), Box<dyn Error>> {
                         TransactionNodeRef::request_node_key("m"),
                     ).with_key("e0"),
                 ],
-            );
-            if tx.send(req).await.is_err() { break; }
+            ).await.is_err() { break; }
             // Do NOT drop permit — drain task releases it via add_permits(1).
             std::mem::forget(permit);
         }

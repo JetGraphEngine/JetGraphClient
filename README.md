@@ -10,7 +10,7 @@ The engine implementation lives in the sibling [`Graph`](../Graph) repository.
 
 ## Requirements
 
-- Rust 1.83+
+- Rust 1.85+
 - `protoc` on `PATH` (used by `tonic-build` during `cargo build`)
 
 > The crate pins `tempfile = 3.10.1` for build dependencies so `prost-build` does not pull `getrandom 0.4` (which requires a newer Cargo than 1.83).
@@ -69,51 +69,55 @@ Query → Score/Process → Insert
 3. **Insert** — always write the event edge, even if the outcome is negative (the graph needs full history for accurate future signals)
 
 ```rust
-use jetgraph_client::{
-    GraphClient, CreateEdgeRequest, VelocityQuery, FraudContextQuery, FlagRequest, prop,
-};
+use jetgraph_client::{Client, NodeRef, TransactionNode, TransactionEdge, TransactionNodeRef};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to the engine
-    let graph = GraphClient::connect("http://localhost:50051").await?;
+    // ── Connect ───────────────────────────────────────────────────────────────
+    let client = Client::connect("http://localhost:50051").await?;
 
-    // ── Phase 1: Query graph signals ─────────────────────────────────────────
-    let entity_id  = graph.lookup_node("USER",    "user-001").await?;
-    let target_id  = graph.lookup_node("PRODUCT", "prod-42").await?;
+    // ── Phase 1: Query graph signals ──────────────────────────────────────────
 
-    // Velocity: how many VIEWED edges in the last 1 hour? (O(1) pre-computed)
-    let views_1h = graph
-        .get_velocity_count(VelocityQuery {
-            node:        entity_id,
-            edge_type:   "VIEWED".into(),
-            window_secs: 3600,
-        })
-        .await?
-        .count;
+    // Point lookup: has this card ever been seen at this merchant?
+    let edge_state = client.get_edge_state(
+        "TRANSACTS_AT",
+        NodeRef::external("card", "card-001"),
+        NodeRef::external("merchant", "merch-42"),
+        None,
+        Some(&[3600, 86400]),   // counts for last 1 h and 24 h activity windows
+    ).await?;
 
-    // Novelty: has this user interacted with this product before?
-    let is_new_relationship = !graph
-        .edge_exists(entity_id, target_id, "VIEWED")
-        .await?;
+    let is_new_relationship = edge_state.is_none();
+    let views_1h = edge_state.as_ref()
+        .and_then(|s| s.activity_counts.first().copied())
+        .unwrap_or(0);
 
-    // Context: aggregated signal from 1-hop neighbours
-    let ctx = graph
-        .get_fraud_context(FraudContextQuery { node: entity_id })
-        .await?;
+    // Aggregated risk context from 1-hop neighbours
+    let ctx = client.features().get_fraud_context(
+        NodeRef::external("card", "card-001"),
+    ).await?;
 
     // ── Phase 2: Apply your logic ─────────────────────────────────────────────
-    let score = compute_score(views_1h, is_new_relationship, ctx.max_neighbor_fraud_score);
+    let is_risky = is_new_relationship && views_1h > 10
+        || ctx.max_neighbor_fraud_score > 0.8;
 
     // ── Phase 3: Insert — always record the event ─────────────────────────────
-    graph.create_edge(CreateEdgeRequest {
-        edge_type_name: "VIEWED".into(),
-        src: entity_id,
-        dst: target_id,
-        properties: vec![prop("score", score)],
-    }).await?;
+    client.ingest_transaction(
+        Some("txn-unique-id"),
+        &[
+            TransactionNode::new("card",     "card-001"),
+            TransactionNode::new("merchant", "merch-42"),
+        ],
+        &[
+            TransactionEdge::new(
+                "TRANSACTS_AT",
+                TransactionNodeRef::request_node_key("card-001"),
+                TransactionNodeRef::request_node_key("merch-42"),
+            ),
+        ],
+    ).await?;
 
-    println!("Signal score: {:.2}", score);
+    println!("Is risky: {is_risky}");
     Ok(())
 }
 ```
@@ -237,18 +241,39 @@ A ⚠ warning is printed when `p99 > 10 ms` or `error_rate > 1 %`. The final sum
 
 ## API Overview
 
-See the crate-level docs in `src/lib.rs` for the full method list. The main client methods:
+See the crate-level docs in `src/lib.rs` for the full method list. The unified `Client` is the recommended entry point; `GraphClient`, `SchemaClient`, `FeatureClient`, and `SegmentClient` are available for fine-grained access.
+
+### Graph operations (`client.graph()` or `Client` convenience methods)
 
 | Method | Description |
 |---|---|
-| `lookup_node(type, external_id)` | Resolve an external ID to an internal node ID |
-| `create_node(type, external_id, props)` | Create a new node (idempotent by external ID) |
-| `edge_exists(src, dst, edge_type)` | Check if a directed relationship exists |
-| `create_edge(request)` | Create a directed edge with optional properties |
-| `get_velocity_count(query)` | O(1) time-windowed edge count for a node |
-| `get_fraud_context(query)` | Aggregated risk signal from 1-hop neighbours |
-| `flag_node(request)` | Set a fraud/risk score on a node (propagates automatically) |
-| `ingest(request)` | Bulk: ensure N nodes and upsert M edges in one RPC call |
+| `create_node(type, external_id, props)` | Create or retrieve a node (idempotent by external ID) |
+| `upsert_edge(edge_type, src, dst, amount, ts, bool_flag)` | Write a compact edge; updates activity window, bins, and sum |
+| `get_edge_state(edge_type, src, dst, …)` | Point lookup with optional activity-window counts |
+| `get_neighbors(node, edge_type, …)` | Paginated neighbour list with optional property filters |
+| `ingest_transaction(txn_id, nodes, edges)` | Bulk: ensure N nodes + upsert M edges in one RPC call |
+| `ingest_stream()` | High-throughput streaming ingest (persistent connection, micro-batched) |
+
+### Schema operations (`client.schema()`)
+
+| Method | Description |
+|---|---|
+| `register_node_type(name)` | Declare a new node type |
+| `register_compact_edge_type(name, from, to, …)` | Declare an edge type with activity bitmap and value bins |
+| `register_static_edge_type(name, from, to, ttl, symmetric)` | Declare a minimal-payload edge type (e.g. SIMILAR_TO) |
+| `register_property(node_type, name, value_type)` | Add a typed property to a node type |
+| `finalize()` | Lock the schema and start accepting ingest traffic |
+
+### Feature operations (`client.features()`)
+
+| Method | Description |
+|---|---|
+| `query_node_histogram(node, edge_type, window_hours, window_days)` | Time-windowed event counts from the node histogram |
+| `get_node_feature_vector(node, edge_types, windows)` | Pre-computed multi-signal feature vector for a node |
+| `get_fraud_context(node)` | Aggregated risk signal from 1-hop neighbours |
+| `flag_node(node, score)` | Set a fraud/risk score (propagates to neighbours automatically) |
+| `find_similar_nodes(node, weights, …)` | Real-time weighted Jaccard k-NN |
+| `build_similarity_graph(node_type, weights, …)` | Batch-build SIMILAR_TO edges for all nodes of a type |
 
 ---
 

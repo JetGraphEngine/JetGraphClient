@@ -3,7 +3,7 @@
 use tonic::transport::Channel;
 use crate::{BoolPropertyWeight, ClientError, EdgeTypeWeight, NodeRef};
 
-pub mod features_proto {
+pub(crate) mod features_proto {
     tonic::include_proto!("features");
 }
 

@@ -64,9 +64,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use tokio_stream::StreamExt;
 
-use jetgraph_client::{Client, GraphClient, NodeRef, TransactionNode, TransactionEdge, TransactionNodeRef};
+use jetgraph_client::{Client, NodeRef, TransactionNode, TransactionEdge, TransactionNodeRef};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI config
@@ -348,9 +347,9 @@ async fn preload_nodes(
             // Drain responses in the background so back-pressure never stalls sends.
             let created2 = created.clone();
             let reader = tokio::spawn(async move {
-                let mut rx = rx;
+                let mut responses = rx;
                 let mut n = 0usize;
-                while let Some(Ok(resp)) = rx.next().await {
+                while let Some(Ok(resp)) = responses.next().await {
                     n += resp.nodes_created as usize;
                 }
                 created2.fetch_add(n, Ordering::Relaxed);
@@ -360,12 +359,7 @@ async fn preload_nodes(
                 let idx = counter.fetch_add(1, Ordering::Relaxed);
                 if idx >= count { break; }
                 let ext = idx.to_string();
-                let req = GraphClient::build_ingest_request(
-                    None,
-                    &[TransactionNode::new(node_type, &ext)],
-                    &[],
-                );
-                if tx.send(req).await.is_err() { break; }
+                if tx.send(None, &[TransactionNode::new(node_type, &ext)], &[]).await.is_err() { break; }
             }
 
             drop(tx);
@@ -429,8 +423,8 @@ async fn ingest_user_chunk(
 
             let stats2 = stats.clone();
             let reader = tokio::spawn(async move {
-                let mut rx = rx;
-                while let Some(Ok(resp)) = rx.next().await {
+                let mut responses = rx;
+                while let Some(Ok(resp)) = responses.next().await {
                     stats2.nodes_written.fetch_add(resp.nodes_created as usize, Ordering::Relaxed);
                     let edges = (resp.edges_created + resp.edges_updated) as usize;
                     stats2.edges_written.fetch_add(edges, Ordering::Relaxed);
@@ -490,8 +484,7 @@ async fn ingest_user_chunk(
                     nodes.push(TransactionNode::new("device", &device_ext).with_key("D"));
                 }
 
-                let req = GraphClient::build_ingest_request(None, &nodes, &edges);
-                if tx.send(req).await.is_err() {
+                if tx.send(None, &nodes, &edges).await.is_err() {
                     stats.errors.fetch_add(1, Ordering::Relaxed);
                     break;
                 }

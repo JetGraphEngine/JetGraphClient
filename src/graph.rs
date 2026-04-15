@@ -9,7 +9,7 @@ use crate::{
     IngestTransactionResult, NodeIngestOutcome, EdgeIngestOutcome,
 };
 
-pub mod graph_proto {
+pub(crate) mod graph_proto {
     tonic::include_proto!("graph");
 }
 
@@ -46,7 +46,7 @@ impl GraphClient {
         }
     }
 
-    fn node_ref_to_proto(r: &NodeRef) -> graph_proto::NodeRef {
+    pub(crate) fn node_ref_to_proto(r: &NodeRef) -> graph_proto::NodeRef {
         match r {
             NodeRef::NodeId(id) => graph_proto::NodeRef {
                 identifier: Some(Identifier::NodeId(*id)),
@@ -60,7 +60,7 @@ impl GraphClient {
         }
     }
 
-    fn property_to_proto(p: &PropertyEntry) -> graph_proto::PropertyEntry {
+    pub(crate) fn property_to_proto(p: &PropertyEntry) -> graph_proto::PropertyEntry {
         let value = match &p.value {
             PropertyValue::Int(v) => graph_proto::PropertyValue { value: Some(graph_proto::property_value::Value::IntVal(*v)) },
             PropertyValue::Float(v) => graph_proto::PropertyValue { value: Some(graph_proto::property_value::Value::FloatVal(*v)) },
@@ -74,7 +74,7 @@ impl GraphClient {
         }
     }
 
-    fn transaction_node_ref_to_proto(r: &TransactionNodeRef) -> graph_proto::TransactionNodeRef {
+    pub(crate) fn transaction_node_ref_to_proto(r: &TransactionNodeRef) -> graph_proto::TransactionNodeRef {
         use graph_proto::transaction_node_ref::Reference;
         let reference = match r {
             TransactionNodeRef::Node(node_ref) => {
@@ -112,8 +112,8 @@ impl GraphClient {
 
     /// Upsert a compact edge.
     ///
-    /// `bool_property_value`: when the edge type has a boolean property registered (bit 63 of
-    /// flags), pass `Some(true/false)` to set it. Pass `None` to leave it unchanged.
+    /// `bool_property_value`: when the edge type has a boolean property registered,
+    /// pass `Some(true/false)` to set it. Pass `None` to leave it unchanged.
     pub async fn upsert_edge(
         &self,
         edge_type: &str,
@@ -140,7 +140,7 @@ impl GraphClient {
             tx_count: payload.tx_count,
             approx_sum: payload.approx_sum,
             last_seen: payload.last_seen,
-            activity_bitmap_raw: payload.flags,
+            activity_bitmap: payload.flags,
             bins,
             bool_flag: payload.bool_flag,
         })
@@ -204,7 +204,7 @@ impl GraphClient {
                     tx_count: p.tx_count,
                     approx_sum: p.approx_sum,
                     last_seen: p.last_seen,
-                    activity_bitmap_raw: p.flags,
+                    activity_bitmap: p.flags,
                     bins,
                     bool_flag: p.bool_flag,
                 }
@@ -231,28 +231,20 @@ impl GraphClient {
         })
     }
 
-    /// Open a bidirectional streaming ingest session using the `IngestStream` RPC.
+    /// Open a high-throughput bidirectional streaming ingest session.
     ///
-    /// Returns a `(sender, response_stream)` pair. Send
-    /// `IngestTransactionRequest` proto messages through the sender; receive
-    /// `IngestTransactionResponse` proto messages through the stream in the
-    /// same order. The server accumulates requests into micro-batches and merges
-    /// edges by `(edge_type, src)` for significantly higher throughput than
-    /// individual `IngestTransaction` calls.
+    /// Returns an [`IngestSender`] / [`IngestResponseStream`] pair backed by
+    /// the `IngestStream` gRPC RPC. The server accumulates messages into
+    /// micro-batches, merges all edges by `(edge_type, src)` across the batch,
+    /// and applies each group in a single sorted-merge RCU pass — yielding
+    /// significantly higher throughput than calling `ingest_transaction`
+    /// repeatedly.
     ///
-    /// Use [`build_ingest_request`] to construct the request proto conveniently.
-    ///
-    /// Drop the sender when done to signal end-of-stream; drain the response
-    /// stream to receive remaining responses before the stream closes.
-    pub async fn ingest_stream(
-        &self,
-    ) -> Result<
-        (
-            tokio::sync::mpsc::Sender<graph_proto::IngestTransactionRequest>,
-            Streaming<graph_proto::IngestTransactionResponse>,
-        ),
-        ClientError,
-    > {
+    /// Send individual transactions with [`IngestSender::send`]; poll responses
+    /// with [`IngestResponseStream::next`]. Drop the sender when finished to
+    /// half-close the stream; drain the response stream to receive remaining
+    /// acknowledgements.
+    pub async fn ingest_stream(&self) -> Result<(IngestSender, IngestResponseStream), ClientError> {
         let (tx, rx) = tokio::sync::mpsc::channel::<graph_proto::IngestTransactionRequest>(1024);
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         let resp = self.client.clone()
@@ -260,35 +252,7 @@ impl GraphClient {
             .await
             .map_err(ClientError::from)?
             .into_inner();
-        Ok((tx, resp))
-    }
-
-    /// Build an `IngestTransactionRequest` from high-level types.
-    ///
-    /// Useful when constructing messages to send through [`ingest_stream`].
-    pub fn build_ingest_request(
-        transaction_id: Option<&str>,
-        nodes: &[TransactionNode],
-        edges: &[TransactionEdge],
-    ) -> graph_proto::IngestTransactionRequest {
-        graph_proto::IngestTransactionRequest {
-            transaction_id: transaction_id.unwrap_or("").to_string(),
-            nodes: nodes.iter().map(|n| graph_proto::TransactionNode {
-                request_node_key: n.request_node_key.clone().unwrap_or_default(),
-                node_type_name:   n.node_type.clone(),
-                external_id:      n.external_id.clone(),
-                properties:       n.properties.iter().map(Self::property_to_proto).collect(),
-            }).collect(),
-            edges: edges.iter().map(|e| graph_proto::TransactionEdge {
-                request_edge_key:    e.request_edge_key.clone().unwrap_or_default(),
-                edge_type_name:      e.edge_type.clone(),
-                src:                 Some(Self::transaction_node_ref_to_proto(&e.src)),
-                dst:                 Some(Self::transaction_node_ref_to_proto(&e.dst)),
-                numeric_value:       e.numeric_value,
-                event_ts_secs:       e.event_ts_secs,
-                bool_property_value: e.bool_property_value,
-            }).collect(),
-        }
+        Ok((IngestSender { tx }, IngestResponseStream { inner: resp }))
     }
 
     /// Get edge state. Returns None if not found.
@@ -323,7 +287,7 @@ impl GraphClient {
             tx_count: payload.tx_count,
             approx_sum: payload.approx_sum,
             last_seen: payload.last_seen,
-            activity_bitmap_raw: payload.flags,
+            activity_bitmap: payload.flags,
             bins,
             filtered_count: inner.filtered_count,
             filtered_approx_sum: inner.filtered_approx_sum,
@@ -486,6 +450,101 @@ impl GraphClient {
             external_id: n.external_id,
         }).collect();
         Ok((nodes, inner.total_count))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// High-level streaming ingest types (hide gRPC wire types from callers)
+// ---------------------------------------------------------------------------
+
+/// Sender half of a high-throughput streaming ingest session.
+///
+/// Created by [`GraphClient::ingest_stream`] or [`crate::Client::ingest_stream`].
+/// Drop this value to half-close the stream so the engine can flush remaining
+/// responses.
+pub struct IngestSender {
+    tx: tokio::sync::mpsc::Sender<graph_proto::IngestTransactionRequest>,
+}
+
+impl IngestSender {
+    /// Send one transaction (a set of nodes + edges) on the stream.
+    ///
+    /// The call is async but cheap — it places the serialised message into the
+    /// in-process channel without waiting for server acknowledgement.
+    /// Back-pressure is applied when the channel is full (capacity 1 024).
+    pub async fn send(
+        &self,
+        transaction_id: Option<&str>,
+        nodes: &[TransactionNode],
+        edges: &[TransactionEdge],
+    ) -> Result<(), ClientError> {
+        let req = build_ingest_proto(transaction_id, nodes, edges);
+        self.tx.send(req).await
+            .map_err(|_| ClientError::Internal("ingest stream closed".into()))
+    }
+
+    /// Returns `true` if the engine-side stream has already been closed.
+    pub fn is_closed(&self) -> bool {
+        self.tx.is_closed()
+    }
+}
+
+/// Response stream from a high-throughput streaming ingest session.
+///
+/// Created alongside an [`IngestSender`] by [`GraphClient::ingest_stream`].
+/// Each item corresponds to one [`IngestSender::send`] call in order.
+pub struct IngestResponseStream {
+    inner: Streaming<graph_proto::IngestTransactionResponse>,
+}
+
+impl IngestResponseStream {
+    /// Receive the next acknowledgement from the engine.
+    ///
+    /// Returns `None` when all sent transactions have been processed and the
+    /// stream is closed. Always drain this stream after dropping the sender so
+    /// the engine can flush any buffered responses.
+    pub async fn next(&mut self) -> Option<Result<IngestTransactionResult, ClientError>> {
+        match self.inner.message().await {
+            Ok(Some(r)) => Some(Ok(IngestTransactionResult {
+                transaction_id:  r.transaction_id,
+                nodes_created:   r.nodes_created,
+                nodes_existing:  r.nodes_existing,
+                node_errors:     r.node_errors,
+                edges_created:   r.edges_created,
+                edges_updated:   r.edges_updated,
+                edge_errors:     r.edge_errors,
+                node_results:    vec![],
+                edge_results:    vec![],
+            })),
+            Ok(None)   => None,
+            Err(e)     => Some(Err(ClientError::from(e))),
+        }
+    }
+}
+
+/// Assemble a proto ingest request from high-level client types.
+fn build_ingest_proto(
+    transaction_id: Option<&str>,
+    nodes: &[TransactionNode],
+    edges: &[TransactionEdge],
+) -> graph_proto::IngestTransactionRequest {
+    graph_proto::IngestTransactionRequest {
+        transaction_id: transaction_id.unwrap_or("").to_string(),
+        nodes: nodes.iter().map(|n| graph_proto::TransactionNode {
+            request_node_key: n.request_node_key.clone().unwrap_or_default(),
+            node_type_name:   n.node_type.clone(),
+            external_id:      n.external_id.clone(),
+            properties:       n.properties.iter().map(GraphClient::property_to_proto).collect(),
+        }).collect(),
+        edges: edges.iter().map(|e| graph_proto::TransactionEdge {
+            request_edge_key:    e.request_edge_key.clone().unwrap_or_default(),
+            edge_type_name:      e.edge_type.clone(),
+            src:                 Some(GraphClient::transaction_node_ref_to_proto(&e.src)),
+            dst:                 Some(GraphClient::transaction_node_ref_to_proto(&e.dst)),
+            numeric_value:       e.numeric_value,
+            event_ts_secs:       e.event_ts_secs,
+            bool_property_value: e.bool_property_value,
+        }).collect(),
     }
 }
 

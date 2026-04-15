@@ -385,10 +385,10 @@ known_node_types={:?}\nknown_edge_types={:?}",
     println!("Schema bootstrap requested. Registering missing types...");
     let mut s = client.schema();
     if !has_src {
-        s.register_node_type(&cfg.src_type).await?;
+        s.register_node_type(&cfg.src_type, false).await?;
     }
     if !has_dst {
-        s.register_node_type(&cfg.dst_type).await?;
+        s.register_node_type(&cfg.dst_type, false).await?;
     }
     if !has_edge {
         s.register_compact_edge_type(

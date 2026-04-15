@@ -50,7 +50,7 @@
 //!     let mut client = Client::connect("http://localhost:50051").await?;
 //!
 //!     // Register SIMILAR_TO with 24h TTL and minimal 8-byte payload.
-    //!     client.register_static_edge_type("SIMILAR_TO", "card", "card", 86400, true).await?;
+//!     client.register_static_edge_type("SIMILAR_TO", "card", "card", 86400, true).await?;
 //!     client.schema().finalize().await?;
 //!
 //!     // Batch-build with per-type weights.
@@ -97,7 +97,7 @@ pub mod segment;
 mod error;
 
 pub use error::ClientError;
-pub use graph::GraphClient;
+pub use graph::{GraphClient, IngestSender, IngestResponseStream};
 pub use schema::SchemaClient;
 pub use features::{
     FeatureClient,
@@ -110,7 +110,7 @@ pub use health::HealthClient;
 pub use types::*;
 pub use segment::{SegmentClient, EvalContextData, segment_name_from_edge};
 
-/// Re-export for schema property registration.
+/// Property value type for schema registration. Use with [`SchemaClient::register_property`].
 pub use schema::schema_proto::ValueType;
 
 use tonic::transport::Channel;
@@ -215,38 +215,36 @@ impl Client {
 
     /// Open a high-throughput bidirectional streaming ingest session.
     ///
-    /// Returns a `(sender, response_stream)` pair backed by the `IngestStream` gRPC
-    /// RPC.  The server accumulates messages into micro-batches (≤ 256 transactions
-    /// / 2 ms window), merges all edges by `(edge_type, src)` across the batch, and
-    /// applies each group in a single sorted-merge RCU pass — yielding significantly
-    /// higher throughput than calling `ingest_transaction` repeatedly.
+    /// Returns an [`IngestSender`] / [`IngestResponseStream`] pair. The engine
+    /// accumulates messages into micro-batches, merges all edges by
+    /// `(edge_type, src)` across the batch, and applies each group in a single
+    /// pass — yielding significantly higher throughput than calling
+    /// `ingest_transaction` repeatedly.
     ///
-    /// Use `GraphClient::build_ingest_request` to build proto messages, then send
-    /// them through the returned sender.  Drop the sender when finished; drain the
-    /// response stream to receive remaining responses.
+    /// Send individual transactions with [`IngestSender::send`]; poll responses
+    /// with [`IngestResponseStream::next`]. Drop the sender when finished to
+    /// signal end-of-input; always drain the response stream so the engine can
+    /// flush remaining acknowledgements.
     ///
     /// # Example
     /// ```no_run
-    /// # use jetgraph_client::{Client, GraphClient, TransactionEdge, TransactionNodeRef, NodeRef};
+    /// # use jetgraph_client::{Client, TransactionNode, TransactionEdge, TransactionNodeRef, NodeRef};
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let client = Client::connect("http://localhost:50051").await?;
-    /// let (tx, mut rx) = client.ingest_stream().await?;
-    /// let req = GraphClient::build_ingest_request(None, &[], &[]);
-    /// tx.send(req).await?;
-    /// drop(tx);
+    /// let (sender, mut responses) = client.ingest_stream().await?;
+    ///
+    /// sender.send(Some("txn-001"), &[], &[]).await?;
+    /// drop(sender);
+    ///
+    /// while let Some(result) = responses.next().await {
+    ///     let ack = result?;
+    ///     println!("nodes_created={} edges_created={}", ack.nodes_created, ack.edges_created);
+    /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn ingest_stream(
-        &self,
-    ) -> Result<
-        (
-            tokio::sync::mpsc::Sender<crate::graph::graph_proto::IngestTransactionRequest>,
-            tonic::Streaming<crate::graph::graph_proto::IngestTransactionResponse>,
-        ),
-        ClientError,
-    > {
+    pub async fn ingest_stream(&self) -> Result<(IngestSender, IngestResponseStream), ClientError> {
         self.graph().ingest_stream().await
     }
 
@@ -400,7 +398,7 @@ impl Client {
     ///
     /// # Example
     /// ```rust,no_run
-    /// # async fn example(mut client: graph_client::Client) -> anyhow::Result<()> {
+    /// # async fn example(client: jetgraph_client::Client) -> anyhow::Result<()> {
     /// let removed = client.clear_edge_type_data("SIMILAR_TO").await?;
     /// println!("{removed} pairs removed");
     /// # Ok(())

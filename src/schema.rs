@@ -3,7 +3,7 @@
 use tonic::transport::Channel;
 use crate::ClientError;
 
-pub mod schema_proto {
+pub(crate) mod schema_proto {
     tonic::include_proto!("schema");
 }
 

@@ -48,12 +48,9 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tokio_stream::StreamExt;
-
 use jetgraph_client::{
     // Core client
     Client,
-    GraphClient,
 
     // Node / edge reference types
     NodeRef,
@@ -70,7 +67,7 @@ use jetgraph_client::{
     BoolPropertyWeight,
 
     // Schema enum
-    schema::schema_proto::ValueType,
+    ValueType,
 };
 
 // ---------------------------------------------------------------------------
@@ -422,7 +419,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  tx_count={}  approx_sum=${:.2}  last_seen={}s ago",
             s.tx_count, s.approx_sum, now_secs().saturating_sub(s.last_seen));
         println!("  bins: {:?}", s.bins);
-        println!("  activity_bitmap=0x{:016x}", s.activity_bitmap_raw);
+        println!("  activity_bitmap=0x{:016x}", s.activity_bitmap);
         println!("  activity_counts(1h, 24h): {:?}", s.activity_counts);
         println!("  bool_flag (is_international): {:?}", s.bool_flag);
     }
@@ -536,10 +533,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Spawn a response reader task so sends never stall on a full response buffer.
     let reader = tokio::spawn(async move {
-        let mut rx = rx;
+        let mut responses = rx;
         let mut edges_created = 0u32;
         let mut edges_updated = 0u32;
-        while let Some(Ok(resp)) = rx.next().await {
+        while let Some(Ok(resp)) = responses.next().await {
             edges_created += resp.edges_created;
             edges_updated += resp.edges_updated;
         }
@@ -547,36 +544,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Send 200 card→merchant transactions.
-    // `GraphClient::build_ingest_request` converts high-level types to the proto
-    // format expected by the sender — it does NOT make any network call.
+    // `IngestSender::send` serialises high-level types into the gRPC wire format
+    // and queues the message — it does NOT block waiting for server acknowledgement.
     for i in 0u32..200 {
         let card_id     = format!("card-stream-{i:04}");
         let merchant_id = format!("merchant-demo-{:03}", (i % 3) + 1);
         let amount      = 10.0 + (i % 50) as f32 * 5.0;
 
-        // Ensure both nodes exist as part of the same request.
-        let req = GraphClient::build_ingest_request(
+        let mut edge = TransactionEdge::new(
+            "TRANSACTS_AT",
+            TransactionNodeRef::node(NodeRef::external("card",     &card_id)),
+            TransactionNodeRef::node(NodeRef::external("merchant", &merchant_id)),
+        );
+        edge.numeric_value = Some(amount);
+        edge.event_ts_secs = Some(secs_ago(i * 60)); // spread over last 3 hours
+
+        // `.send()` is non-blocking as long as the internal buffer (1024 slots) is
+        // not full. If it fills up, `.send()` blocks until space is available —
+        // this is natural backpressure from the server.
+        tx.send(
             Some(&format!("stream-tx-{i}")),
             &[
                 TransactionNode::new("card",     &card_id),
                 TransactionNode::new("merchant", &merchant_id),
             ],
-            &[{
-                let mut edge = TransactionEdge::new(
-                    "TRANSACTS_AT",
-                    TransactionNodeRef::node(NodeRef::external("card",     &card_id)),
-                    TransactionNodeRef::node(NodeRef::external("merchant", &merchant_id)),
-                );
-                edge.numeric_value = Some(amount);
-                edge.event_ts_secs = Some(secs_ago(i * 60)); // spread over last 3 hours
-                edge
-            }],
-        );
-
-        // `.send()` is non-blocking as long as the internal buffer (1024 slots) is
-        // not full. If it fills up, `.send()` blocks until space is available —
-        // this is natural backpressure from the server.
-        tx.send(req).await?;
+            &[edge],
+        ).await?;
     }
 
     // Dropping the sender signals end-of-stream to the server. The server will
@@ -601,9 +594,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handles.push(tokio::spawn(async move {
             let (tx, rx) = c.ingest_stream().await?;
             let reader = tokio::spawn(async move {
-                let mut rx = rx;
+                let mut responses = rx;
                 let mut total = 0u32;
-                while let Some(Ok(r)) = rx.next().await { total += r.edges_created; }
+                while let Some(Ok(r)) = responses.next().await { total += r.edges_created; }
                 total
             });
             for i in 0u32..500 {
@@ -615,12 +608,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     TransactionNodeRef::node(NodeRef::external("merchant", &merch)),
                 );
                 edge.numeric_value = Some(50.0 + i as f32);
-                let req = GraphClient::build_ingest_request(
+                tx.send(
                     None,
                     &[TransactionNode::new("card", &card)],
                     &[edge],
-                );
-                tx.send(req).await?;
+                ).await?;
             }
             drop(tx);
             let created = reader.await.unwrap_or(0);

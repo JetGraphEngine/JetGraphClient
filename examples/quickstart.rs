@@ -52,7 +52,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::Semaphore;
 
-use jetgraph_client::{Client, NodeRef, PropertyEntry, PropertyValue, ValueType};
+use jetgraph_client::{Client, NodeRef, NodePropertyFilter, PropertyEntry, PropertyValue, ValueType};
 
 /// Max concurrent in-flight gRPC calls during bulk data load.
 const CONCURRENCY: usize = 64;
@@ -1214,7 +1214,7 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
             s.approx_sum,
             now_secs().saturating_sub(s.last_seen)
         );
-        println!("    activity_bitmap=0x{:016x}", s.activity_bitmap_raw);
+        println!("    activity_bitmap=0x{:016x}", s.activity_bitmap);
         println!(
             "    amount_bins: <$5={} $5-25={} $25-50={} $50-100={} $100-250={} $250-500={} $500k-1k={} ≥$1k={}",
             s.bins[0], s.bins[1], s.bins[2], s.bins[3],
@@ -1542,7 +1542,7 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         for ((_, label), count) in windows.iter().zip(s.activity_counts.iter()) {
             println!("    [{label}] {count} device interactions");
         }
-        println!("    activity_bitmap=0x{:016x}", s.activity_bitmap_raw);
+        println!("    activity_bitmap=0x{:016x}", s.activity_bitmap);
     } else {
         println!("    Edge not found");
     }

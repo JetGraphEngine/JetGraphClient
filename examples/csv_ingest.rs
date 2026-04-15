@@ -41,9 +41,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc;
-use tokio_stream::StreamExt;
 
-use jetgraph_client::{Client, GraphClient, PropertyEntry, TransactionEdge,
+use jetgraph_client::{Client, PropertyEntry, TransactionEdge,
                       TransactionNode, TransactionNodeRef};
 
 // ── Tuning constants ────────────────────────────────────────────────────────
@@ -161,9 +160,11 @@ struct GeoResult {
     ghash: String,
 }
 
-/// A pre-built gRPC request covering ROWS_PER_REQUEST (or fewer) CSV rows.
+/// A fully-built batch ready to send through the ingest stream.
 struct BatchTask {
-    request: jetgraph_client::graph::graph_proto::IngestTransactionRequest,
+    transaction_id: String,
+    nodes: Vec<TransactionNode>,
+    edges: Vec<TransactionEdge>,
     n_nodes: u64,
     n_edges: u64,
 }
@@ -350,19 +351,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let nc2 = nc.clone();
             let ec2 = ec.clone();
             let reader = tokio::spawn(async move {
-                let mut rx = stream_rx;
-                while let Some(Ok(resp)) = rx.next().await {
-                    tc2.ack.fetch_add(1, Ordering::Relaxed);
-                    nc2.ack.fetch_add(
-                        (resp.nodes_created + resp.nodes_existing) as u64,
-                        Ordering::Relaxed,
-                    );
-                    nc2.err.fetch_add(resp.node_errors as u64, Ordering::Relaxed);
-                    ec2.ack.fetch_add(
-                        (resp.edges_created + resp.edges_updated) as u64,
-                        Ordering::Relaxed,
-                    );
-                    ec2.err.fetch_add(resp.edge_errors as u64, Ordering::Relaxed);
+                let mut responses = stream_rx;
+                while let Some(result) = responses.next().await {
+                    match result {
+                        Ok(resp) => {
+                            tc2.ack.fetch_add(1, Ordering::Relaxed);
+                            nc2.ack.fetch_add(
+                                (resp.nodes_created + resp.nodes_existing) as u64,
+                                Ordering::Relaxed,
+                            );
+                            nc2.err.fetch_add(resp.node_errors as u64, Ordering::Relaxed);
+                            ec2.ack.fetch_add(
+                                (resp.edges_created + resp.edges_updated) as u64,
+                                Ordering::Relaxed,
+                            );
+                            ec2.err.fetch_add(resp.edge_errors as u64, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            tc2.err.fetch_add(1, Ordering::Relaxed);
+                            eprintln!("⚠ worker {w}: response error: {e}");
+                        }
+                    }
                 }
             });
 
@@ -383,7 +392,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 nc.sent.fetch_add(nn, Ordering::Relaxed);
                 ec.sent.fetch_add(ne, Ordering::Relaxed);
 
-                if let Err(e) = stream_tx.send(task.request).await {
+                if let Err(e) = stream_tx.send(Some(&task.transaction_id), &task.nodes, &task.edges).await {
                     tc.err.fetch_add(1, Ordering::Relaxed);
                     nc.err.fetch_add(nn, Ordering::Relaxed);
                     ec.err.fetch_add(ne, Ordering::Relaxed);
@@ -451,12 +460,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let (nodes, edges) = build_batch(&batch_rows, &batch_geos, &mut rng_seed, global_row);
             let n_nodes = nodes.len() as u64;
             let n_edges = edges.len() as u64;
-            let request = GraphClient::build_ingest_request(
-                Some(&format!("batch-{global_row}")),
-                &nodes,
-                &edges,
-            );
-            batch_tx.send(BatchTask { request, n_nodes, n_edges }).await?;
+            batch_tx.send(BatchTask {
+                transaction_id: format!("batch-{global_row}"),
+                nodes,
+                edges,
+                n_nodes,
+                n_edges,
+            }).await?;
             batch_rows.clear();
             batch_geos.clear();
         }
@@ -486,12 +496,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (nodes, edges) = build_batch(&batch_rows, &batch_geos, &mut rng_seed, global_row);
         let n_nodes = nodes.len() as u64;
         let n_edges = edges.len() as u64;
-        let request = GraphClient::build_ingest_request(
-            Some(&format!("batch-{global_row}-final")),
-            &nodes,
-            &edges,
-        );
-        batch_tx.send(BatchTask { request, n_nodes, n_edges }).await?;
+        batch_tx.send(BatchTask {
+            transaction_id: format!("batch-{global_row}-final"),
+            nodes,
+            edges,
+            n_nodes,
+            n_edges,
+        }).await?;
     }
 
     // ── Drain: close channel, wait for workers ────────────────────────────────

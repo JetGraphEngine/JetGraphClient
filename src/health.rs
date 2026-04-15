@@ -3,7 +3,7 @@
 use tonic::transport::Channel;
 use crate::ClientError;
 
-pub mod health_proto {
+pub(crate) mod health_proto {
     tonic::include_proto!("health");
 }
 
