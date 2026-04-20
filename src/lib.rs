@@ -98,7 +98,7 @@ mod error;
 
 pub use error::ClientError;
 pub use graph::{GraphClient, IngestSender, IngestResponseStream};
-pub use schema::SchemaClient;
+pub use schema::{SchemaClient, GetSchemaResult, NodeTypeInfo, EdgeTypeInfo, RemoveEdgeTypeResult, MemoryUsage};
 pub use features::{
     FeatureClient,
     SimilarNodeInfo,
@@ -407,5 +407,44 @@ impl Client {
     pub async fn clear_edge_type_data(&self, edge_type_name: &str) -> Result<u64, ClientError> {
         let mut features = self.features();
         features.clear_edge_type_data(edge_type_name).await
+    }
+
+    /// Remove an edge type from the engine schema **and** drop all its stored edge data.
+    ///
+    /// Unlike [`clear_edge_type_data`](Self::clear_edge_type_data), this also removes
+    /// the type definition from the schema so that the name can be re-registered later.
+    /// The operation is destructive and irreversible.
+    ///
+    /// Returns a [`RemoveEdgeTypeResult`] containing the numeric ID and how many pairs
+    /// were dropped. Returns an error if the edge type name is not found in the schema.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # async fn example(client: jetgraph_client::Client) -> anyhow::Result<()> {
+    /// let result = client.remove_edge_type("NEXT_EFT").await?;
+    /// println!("removed id={} pairs={}", result.edge_type_id, result.pairs_dropped);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn remove_edge_type(&self, name: &str) -> Result<RemoveEdgeTypeResult, ClientError> {
+        self.schema().remove_edge_type(name).await
+    }
+
+    /// Query current memory usage across nodes, edges, histograms, and runtime overhead.
+    ///
+    /// Returns a [`MemoryUsage`] with per-category byte counts and a human-readable
+    /// breakdown string. Useful for capacity planning and debugging memory growth.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # async fn example(client: jetgraph_client::Client) -> anyhow::Result<()> {
+    /// let mem = client.memory_usage().await?;
+    /// println!("total={} MB", mem.total_bytes / 1_048_576);
+    /// println!("{}", mem.breakdown_text);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn memory_usage(&self) -> Result<MemoryUsage, ClientError> {
+        self.schema().get_memory_usage().await
     }
 }

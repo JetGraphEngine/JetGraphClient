@@ -155,6 +155,45 @@ impl SchemaClient {
         Ok(r.into_inner().edge_type_id)
     }
 
+    /// Remove an edge type from the engine schema and drop **all** stored edges of that type.
+    ///
+    /// This is a destructive, irreversible operation. Use it to clean up transition edge
+    /// types created by the pattern miner when deleting a rule, or to reclaim memory from
+    /// an edge type that is no longer needed.
+    ///
+    /// Returns `(edge_type_id, pairs_dropped)` on success.
+    /// Returns an error if `name` is not found in the live schema.
+    pub async fn remove_edge_type(
+        &mut self,
+        name: &str,
+    ) -> Result<RemoveEdgeTypeResult, ClientError> {
+        let req = schema_proto::RemoveEdgeTypeRequest { name: name.to_string() };
+        let r = self.client.remove_edge_type(req).await.map_err(ClientError::from)?;
+        let inner = r.into_inner();
+        Ok(RemoveEdgeTypeResult {
+            edge_type_id:  inner.edge_type_id,
+            pairs_dropped: inner.pairs_dropped,
+        })
+    }
+
+    /// Query current memory usage across nodes, edges, histograms, and runtime overhead.
+    pub async fn get_memory_usage(&mut self) -> Result<MemoryUsage, ClientError> {
+        let req = schema_proto::GetMemoryUsageRequest {};
+        let r = self.client.get_memory_usage(req).await.map_err(ClientError::from)?;
+        let inner = r.into_inner();
+        let est = inner.estimate.unwrap_or_default();
+        Ok(MemoryUsage {
+            total_bytes:         est.total_bytes,
+            nodes_bytes:         est.nodes_bytes,
+            compact_store_bytes: est.compact_store_bytes,
+            histogram_bytes:     est.histogram_bytes,
+            runtime_bytes:       est.runtime_bytes,
+            breakdown_text:      est.breakdown_text,
+            node_count:          inner.node_count,
+            compact_pair_count:  inner.compact_pair_count,
+        })
+    }
+
     /// Finalize the schema. Call after all types are registered.
     pub async fn finalize(&mut self) -> Result<u32, ClientError> {
         let req = schema_proto::FinalizeRequest {};
@@ -219,4 +258,27 @@ pub struct EdgeTypeInfo {
     /// True when the edge type was registered as symmetric (undirected).
     /// Upserts normalize to (min(src,dst), max(src,dst)) and queries return out ∪ in.
     pub is_symmetric: bool,
+}
+
+/// Result returned by [`SchemaClient::remove_edge_type`].
+#[derive(Debug, Clone)]
+pub struct RemoveEdgeTypeResult {
+    /// Numeric ID of the edge type that was removed.
+    pub edge_type_id: u32,
+    /// Number of edge pairs that were dropped from the in-memory store.
+    pub pairs_dropped: u64,
+}
+
+/// Memory usage breakdown returned by [`SchemaClient::get_memory_usage`].
+#[derive(Debug, Clone, Default)]
+pub struct MemoryUsage {
+    pub total_bytes:         u64,
+    pub nodes_bytes:         u64,
+    pub compact_store_bytes: u64,
+    pub histogram_bytes:     u64,
+    pub runtime_bytes:       u64,
+    /// Human-readable per-type breakdown string produced by the engine.
+    pub breakdown_text:      String,
+    pub node_count:          u64,
+    pub compact_pair_count:  u64,
 }

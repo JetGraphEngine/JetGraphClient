@@ -8,6 +8,8 @@ service SchemaService {
     rpc FinalizeSchema           (FinalizeRequest)      returns (FinalizeResponse);
     rpc GetSchema                (GetSchemaRequest)     returns (GetSchemaResponse);
     rpc GetMemoryUsage           (GetMemoryUsageRequest) returns (GetMemoryUsageResponse);
+    // Remove an edge type from the live schema and drop all edges of that type.
+    rpc RemoveEdgeType           (RemoveEdgeTypeRequest) returns (RemoveEdgeTypeResponse);
 }
 
 // How external IDs for this node type are stored and hashed.
@@ -167,4 +169,15 @@ message GetMemoryUsageResponse {
     MemoryEstimate estimate = 1;
     uint64 node_count       = 2;
     uint64 compact_pair_count = 3;
+}
+
+message RemoveEdgeTypeRequest {
+    string name = 1;
+}
+
+message RemoveEdgeTypeResponse {
+    // The numeric ID of the edge type that was removed.
+    uint32 edge_type_id   = 1;
+    // How many edge pairs were dropped from the in-memory store.
+    uint64 pairs_dropped  = 2;
 }
