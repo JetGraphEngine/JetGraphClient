@@ -22,6 +22,8 @@ service GraphService {
     // merges edges across transactions by (edge_type, src), applies each group with
     // a single sorted-merge RCU pass, and streams responses back in request order.
     rpc IngestStream (stream IngestTransactionRequest) returns (stream IngestTransactionResponse);
+    // Change-data-capture: subscribe to a real-time stream of edge upsert events.
+    rpc WatchEdgeUpserts (EdgeEventRequest) returns (stream EdgeEvent);
 }
 
 message NodeRef {
@@ -312,3 +314,16 @@ message GetEdgeStateResponse {
     repeated uint32 activity_counts = 5;
 }
 
+// ── WatchEdgeUpserts ────────────────────────────────────────────────────────
+message EdgeEventRequest {
+    repeated string watch_edge_types = 1;
+}
+
+message EdgeEvent {
+    string edge_type      = 1;
+    uint64 src_node_id    = 2;
+    uint64 dst_node_id    = 3;
+    float  numeric_value  = 4;
+    uint32 event_ts_secs  = 5;
+    uint64 lagged_count   = 6;
+}

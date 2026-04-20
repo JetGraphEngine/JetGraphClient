@@ -98,6 +98,7 @@ mod error;
 
 pub use error::ClientError;
 pub use graph::{GraphClient, IngestSender, IngestResponseStream};
+pub use graph::graph_proto::EdgeEvent;
 pub use schema::{SchemaClient, GetSchemaResult, NodeTypeInfo, EdgeTypeInfo, RemoveEdgeTypeResult, MemoryUsage};
 pub use features::{
     FeatureClient,
@@ -201,6 +202,15 @@ impl Client {
         bool_property_value: Option<bool>,
     ) -> Result<UpsertEdgeResult, ClientError> {
         self.graph().upsert_edge(edge_type, src, dst, numeric_value, event_ts_secs, bool_property_value).await
+    }
+
+    /// Subscribe to the engine's real-time CDC edge-upsert stream.
+    /// Pass an empty Vec to receive every edge type.
+    pub async fn watch_edge_upserts(
+        &self,
+        watch_edge_types: Vec<String>,
+    ) -> Result<tonic::Streaming<EdgeEvent>, ClientError> {
+        self.graph().watch_edge_upserts(watch_edge_types).await
     }
 
     /// Best-effort transaction ingest: ensure nodes and upsert edges in one call.

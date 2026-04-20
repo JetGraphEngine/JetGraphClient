@@ -451,6 +451,21 @@ impl GraphClient {
         }).collect();
         Ok((nodes, inner.total_count))
     }
+
+    /// Subscribe to the engine's real-time CDC edge-upsert stream.
+    /// Pass an empty Vec to receive every edge type.
+    /// Returns a `tonic::Streaming<EdgeEvent>` that yields one event per upsert.
+    pub async fn watch_edge_upserts(
+        &self,
+        watch_edge_types: Vec<String>,
+    ) -> Result<Streaming<graph_proto::EdgeEvent>, ClientError> {
+        let req = graph_proto::EdgeEventRequest { watch_edge_types };
+        let stream = self.client.clone()
+            .watch_edge_upserts(req)
+            .await
+            .map_err(ClientError::from)?;
+        Ok(stream.into_inner())
+    }
 }
 
 // ---------------------------------------------------------------------------
