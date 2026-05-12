@@ -847,25 +847,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         fv.direct_fraud_score, fv.fraudulent_neighbor_count, fv.max_neighbor_fraud_score);
 
     // =========================================================================
-    // SECTION 11 — Fraud Flagging
+    // SECTION 11 — Fraud Cases
     // =========================================================================
     //
-    // Any node can be flagged as fraudulent with a score (0.0–1.0) and a reason.
-    // Flags are stored as edges from the node to a special FRAUD sentinel node.
+    // Fraud is represented as explicit cases. Each case links all participating
+    // nodes to a FRAUD_CASE node with a score (0.0–1.0) and a reason.
     //
     // `get_fraud_context` checks a list of nodes in one call and returns all
     // that are flagged. Use this at authorization time to check the card,
     // merchant, device, and IP in a single RPC.
 
-    println!("\n=== 11. Fraud Flagging ===");
+    println!("\n=== 11. Fraud Cases ===");
 
-    // Flag a known compromised device.
-    client.features().flag_node(
-        NodeRef::external("device", "device-demo-002"),
+    // Create a case for a known compromised device.
+    client.features().create_fraud_case(
+        "case-device-demo-002",
+        &[NodeRef::external("device", "device-demo-002")],
         0.95,
         "Device seen on 500+ unrelated cards in 24h — suspected device farm",
     ).await?;
-    println!("  Flagged device-demo-002");
+    println!("  Created case-device-demo-002");
 
     // Batch-check all parties in the current transaction.
     let ctx = client.features().get_fraud_context(&[
@@ -879,16 +880,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         println!("  FRAUD HITS ({}):", ctx.flagged_nodes.len());
         for n in &ctx.flagged_nodes {
-            println!("    node_id={} score={:.2} reason=\"{}\"",
-                n.node_id, n.fraud_score, n.reason);
+            for case in &n.cases {
+                println!("    node_id={} case={} score={:.2} reason=\"{}\"",
+                    n.node_id, case.case_id, case.fraud_score, case.reason);
+            }
         }
     }
 
-    // Remove a flag (e.g. after investigation concludes it was a false positive).
-    client.features().unflag_node(
+    // Remove a participant from a case after investigation clears it.
+    client.features().remove_fraud_case_node(
+        "case-device-demo-002",
         NodeRef::external("device", "device-demo-002"),
     ).await?;
-    println!("  Unflagged device-demo-002");
+    println!("  Removed device-demo-002 from case-device-demo-002");
 
     // =========================================================================
     // SECTION 12 — Similarity Graph

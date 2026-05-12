@@ -3,8 +3,9 @@ package features;
 
 service FeatureService {
     rpc GetFraudContext      (FraudContextQuery)        returns (FraudContext);
-    rpc FlagNode             (FlagRequest)              returns (FlagResponse);
-    rpc UnflagNode           (UnflagRequest)            returns (UnflagResponse);
+    rpc CreateFraudCase      (CreateFraudCaseRequest)   returns (CreateFraudCaseResponse);
+    rpc AddFraudCaseNodes    (AddFraudCaseNodesRequest) returns (AddFraudCaseNodesResponse);
+    rpc RemoveFraudCaseNode  (RemoveFraudCaseNodeRequest) returns (RemoveFraudCaseNodeResponse);
     // Compact edge type: query timed histogram for a node.
     rpc QueryNodeHistogram   (NodeHistogramQuery)       returns (NodeHistogramResult);
     // Combined scoring feature vector for a node across multiple edge types.
@@ -114,29 +115,47 @@ message FraudContextQuery {
     repeated NodeRef nodes = 1;
 }
 
+message FraudCaseInfo {
+    uint64 case_node_id = 1;
+    string case_id      = 2;
+    float  fraud_score  = 3;
+    string reason       = 4;
+}
+
 message NodeFraudInfo {
-    uint64 node_id     = 1;
-    float  fraud_score = 2;
-    string reason      = 3;
+    uint64 node_id = 1;
+    repeated FraudCaseInfo cases = 2;
 }
 
 message FraudContext {
     repeated NodeFraudInfo flagged_nodes = 1;
 }
 
-message FlagRequest {
-    NodeRef node        = 1;
-    float   fraud_score = 2;
-    string  reason      = 3;
+message CreateFraudCaseRequest {
+    string case_id = 1;
+    repeated NodeRef participants = 2;
+    float fraud_score = 3;
+    string reason = 4;
 }
 
-message FlagResponse {}
-
-message UnflagRequest {
-    NodeRef node = 1;
+message CreateFraudCaseResponse {
+    uint64 case_node_id = 1;
 }
 
-message UnflagResponse {}
+message AddFraudCaseNodesRequest {
+    string case_id = 1;
+    repeated NodeRef participants = 2;
+    float fraud_score = 3;
+}
+
+message AddFraudCaseNodesResponse {}
+
+message RemoveFraudCaseNodeRequest {
+    string case_id = 1;
+    NodeRef participant = 2;
+}
+
+message RemoveFraudCaseNodeResponse {}
 
 // ---------------------------------------------------------------------------
 // Compact edge type feature queries (new)

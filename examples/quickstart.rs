@@ -1132,51 +1132,33 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
             )
             .await?;
 
-        // Flag all three mule accounts so fraud context queries surface them
+        // Create one fraud case containing the mule accounts, device, and merchant.
         client
             .features()
-            .flag_node(
-                NodeRef::external("account", "account-mule-001"),
+            .create_fraud_case(
+                "case-mule-chain-001",
+                &[
+                    NodeRef::external("account", "account-mule-001"),
+                    NodeRef::external("account", "account-mule-002"),
+                    NodeRef::external("account", "account-mule-003"),
+                    NodeRef::external("device", "device-farm-001"),
+                    NodeRef::external("merchant", "merchant-crypto-001"),
+                ],
                 0.91,
-                "Money mule — funds received from 12 compromised cards, forwarded to crypto exchange",
+                "Money mule chain — funds received from compromised cards and cashed out via crypto exchange",
             )
             .await?;
-        client
-            .features()
-            .flag_node(
-                NodeRef::external("account", "account-mule-002"),
-                0.88,
-                "Money mule — intermediary layer, opened from same device as account-mule-001",
-            )
-            .await?;
-        client
-            .features()
-            .flag_node(
-                NodeRef::external("account", "account-mule-003"),
-                0.85,
-                "Money mule — cash-out account, linked to CryptoFX Exchange withdrawals",
-            )
-            .await?;
-
-        // Flag the device farm and the crypto merchant
-        client
-            .features()
-            .flag_node(
+        client.features().create_fraud_case(
+            "case-device-farm-001",
+            &[
                 NodeRef::external("device", "device-farm-001"),
-                0.97,
-                "Device farm — rooted Android shared by 500+ unrelated cards, mass card compromise",
-            )
-            .await?;
-        client
-            .features()
-            .flag_node(
                 NodeRef::external("merchant", "merchant-crypto-001"),
-                0.82,
-                "High-risk merchant — offshore crypto exchange receiving funds from 47 flagged cards",
-            )
-            .await?;
+            ],
+            0.97,
+            "Device farm — rooted Android shared by 500+ unrelated cards, mass card compromise",
+        ).await?;
 
-        println!("    3-hop mule chain created + 5 nodes flagged for fraud context queries");
+        println!("    3-hop mule chain created + fraud cases linked to 5 context nodes");
     }
 
     Ok(())
@@ -1501,10 +1483,12 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     } else {
         println!("    ⚠ FRAUD HITS ({} flagged nodes):", ctx.flagged_nodes.len());
         for n in &ctx.flagged_nodes {
-            println!(
-                "      node_id={} score={:.2} reason=\"{}\"",
-                n.node_id, n.fraud_score, n.reason
-            );
+            for case in &n.cases {
+                println!(
+                    "      node_id={} case={} score={:.2} reason=\"{}\"",
+                    n.node_id, case.case_id, case.fraud_score, case.reason
+                );
+            }
         }
         println!("    → TRANSACTION SHOULD BE DECLINED / STEP-UP AUTHENTICATION REQUIRED");
     }

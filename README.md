@@ -92,14 +92,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.activity_counts.first().copied())
         .unwrap_or(0);
 
-    // Aggregated risk context from 1-hop neighbours
-    let ctx = client.features().get_fraud_context(
+    // Explicit fraud-case context for the transaction parties
+    let ctx = client.features().get_fraud_context(&[
         NodeRef::external("card", "card-001"),
-    ).await?;
+        NodeRef::external("merchant", "merch-42"),
+    ]).await?;
 
     // ── Phase 2: Apply your logic ─────────────────────────────────────────────
     let is_risky = is_new_relationship && views_1h > 10
-        || ctx.max_neighbor_fraud_score > 0.8;
+        || !ctx.flagged_nodes.is_empty();
 
     // ── Phase 3: Insert — always record the event ─────────────────────────────
     client.ingest_transaction(
@@ -270,8 +271,8 @@ See the crate-level docs in `src/lib.rs` for the full method list. The unified `
 |---|---|
 | `query_node_histogram(node, edge_type, window_hours, window_days)` | Time-windowed event counts from the node histogram |
 | `get_node_feature_vector(node, edge_types, windows)` | Pre-computed multi-signal feature vector for a node |
-| `get_fraud_context(node)` | Aggregated risk signal from 1-hop neighbours |
-| `flag_node(node, score)` | Set a fraud/risk score (propagates to neighbours automatically) |
+| `get_fraud_context(nodes)` | Batch-check which nodes are linked to explicit fraud cases |
+| `create_fraud_case(case_id, participants, score, reason)` | Create a `FRAUD_CASE` node and link all involved participants |
 | `find_similar_nodes(node, weights, …)` | Real-time weighted Jaccard k-NN |
 | `build_similarity_graph(node_type, weights, …)` | Batch-build SIMILAR_TO edges for all nodes of a type |
 

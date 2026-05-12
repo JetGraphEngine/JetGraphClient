@@ -96,8 +96,7 @@ impl FeatureClient {
         })
     }
 
-    /// Check which of the given nodes have an edge to FRAUD.
-    /// Returns `(node_id, fraud_score, reason)` for each flagged node.
+    /// Check which of the given nodes are linked to fraud cases.
     pub async fn get_fraud_context(
         &mut self,
         nodes: &[NodeRef],
@@ -113,43 +112,66 @@ impl FeatureClient {
                 .into_iter()
                 .map(|n| NodeFraudInfo {
                     node_id: n.node_id,
-                    fraud_score: n.fraud_score,
-                    reason: n.reason,
+                    cases: n
+                        .cases
+                        .into_iter()
+                        .map(|case| FraudCaseInfo {
+                            case_node_id: case.case_node_id,
+                            case_id: case.case_id,
+                            fraud_score: case.fraud_score,
+                            reason: case.reason,
+                        })
+                        .collect(),
                 })
                 .collect(),
         })
     }
 
-    /// Alias for `get_fraud_context`. Check which of the given nodes have an edge to FRAUD.
-    pub async fn nodes_with_fraud_edge(
+    /// Create a fraud case and link all participant nodes to it.
+    pub async fn create_fraud_case(
         &mut self,
-        nodes: &[NodeRef],
-    ) -> Result<FraudContext, ClientError> {
-        self.get_fraud_context(nodes).await
-    }
-
-    /// Flag a node as fraudulent.
-    pub async fn flag_node(
-        &mut self,
-        node: NodeRef,
+        case_id: &str,
+        participants: &[NodeRef],
         fraud_score: f32,
         reason: &str,
-    ) -> Result<(), ClientError> {
-        let req = features_proto::FlagRequest {
-            node: Some(node_ref_to_proto(&node)),
+    ) -> Result<u64, ClientError> {
+        let req = features_proto::CreateFraudCaseRequest {
+            case_id: case_id.to_string(),
+            participants: participants.iter().map(|n| node_ref_to_proto(n)).collect(),
             fraud_score,
             reason: reason.to_string(),
         };
-        self.client.flag_node(req).await.map_err(ClientError::from)?;
+        let r = self.client.create_fraud_case(req).await.map_err(ClientError::from)?;
+        Ok(r.into_inner().case_node_id)
+    }
+
+    /// Add participants to an existing fraud case.
+    pub async fn add_fraud_case_nodes(
+        &mut self,
+        case_id: &str,
+        participants: &[NodeRef],
+        fraud_score: f32,
+    ) -> Result<(), ClientError> {
+        let req = features_proto::AddFraudCaseNodesRequest {
+            case_id: case_id.to_string(),
+            participants: participants.iter().map(|n| node_ref_to_proto(n)).collect(),
+            fraud_score,
+        };
+        self.client.add_fraud_case_nodes(req).await.map_err(ClientError::from)?;
         Ok(())
     }
 
-    /// Remove fraud flag from a node.
-    pub async fn unflag_node(&mut self, node: NodeRef) -> Result<(), ClientError> {
-        let req = features_proto::UnflagRequest {
-            node: Some(node_ref_to_proto(&node)),
+    /// Remove one participant from a fraud case.
+    pub async fn remove_fraud_case_node(
+        &mut self,
+        case_id: &str,
+        participant: NodeRef,
+    ) -> Result<(), ClientError> {
+        let req = features_proto::RemoveFraudCaseNodeRequest {
+            case_id: case_id.to_string(),
+            participant: Some(node_ref_to_proto(&participant)),
         };
-        self.client.unflag_node(req).await.map_err(ClientError::from)?;
+        self.client.remove_fraud_case_node(req).await.map_err(ClientError::from)?;
         Ok(())
     }
 
@@ -318,10 +340,17 @@ pub struct EdgeTypeFeatures {
 }
 
 #[derive(Debug, Clone)]
-pub struct NodeFraudInfo {
-    pub node_id: u64,
+pub struct FraudCaseInfo {
+    pub case_node_id: u64,
+    pub case_id: String,
     pub fraud_score: f32,
     pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeFraudInfo {
+    pub node_id: u64,
+    pub cases: Vec<FraudCaseInfo>,
 }
 
 #[derive(Debug, Clone)]
