@@ -398,3 +398,52 @@ impl NodePropertyFilter {
         Self { property: property.to_string(), predicate: NodePropPredicate::BoolEq(val) }
     }
 }
+
+/// Server-side filter applied to the *edges* returned by `get_neighbors_filtered`.
+///
+/// All conditions are ANDed together. Leave a field unset (or the vec empty) to
+/// skip that constraint.
+///
+/// - `min_created_at_us` / `max_created_at_us`: keep only edges whose
+///   `created_at_us` falls within `[min, max]` (microseconds since epoch).
+/// - `property_filters`: predicates evaluated against the *edge*'s own
+///   properties (distinct from `neighbor_filters`, which target the neighbour
+///   node's properties).
+#[derive(Debug, Clone, Default)]
+pub struct EdgeFilter {
+    pub min_created_at_us: Option<i64>,
+    pub max_created_at_us: Option<i64>,
+    pub property_filters:  Vec<NodePropertyFilter>,
+}
+
+impl EdgeFilter {
+    /// An empty filter (matches every edge). Equivalent to `EdgeFilter::default()`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Keep only edges created at or after `us` (microseconds since epoch).
+    pub fn min_created_at_us(mut self, us: i64) -> Self {
+        self.min_created_at_us = Some(us);
+        self
+    }
+
+    /// Keep only edges created at or before `us` (microseconds since epoch).
+    pub fn max_created_at_us(mut self, us: i64) -> Self {
+        self.max_created_at_us = Some(us);
+        self
+    }
+
+    /// Add a predicate on one of the edge's own properties.
+    pub fn with_property_filter(mut self, filter: NodePropertyFilter) -> Self {
+        self.property_filters.push(filter);
+        self
+    }
+
+    /// True when this filter imposes no constraints at all.
+    pub fn is_empty(&self) -> bool {
+        self.min_created_at_us.is_none()
+            && self.max_created_at_us.is_none()
+            && self.property_filters.is_empty()
+    }
+}

@@ -4,7 +4,7 @@ use tonic::transport::Channel;
 use tonic::Streaming;
 use crate::{
     ClientError, NodeRef, PropertyEntry, PropertyValue, UpsertEdgeResult, EdgeState, NeighborEdge,
-    CreateNodeResult, NodePropertyFilter, NodePropPredicate,
+    CreateNodeResult, EdgeFilter, NodePropertyFilter, NodePropPredicate,
     TransactionNode, TransactionNodeRef, TransactionEdge,
     IngestTransactionResult, NodeIngestOutcome, EdgeIngestOutcome,
 };
@@ -108,6 +108,36 @@ impl GraphClient {
             node_id: inner.node_id,
             created: inner.created,
         })
+    }
+
+    /// Update (merge) properties on an existing node.
+    ///
+    /// The supplied properties are applied on top of the node's current
+    /// properties; properties not listed are left unchanged. Errors if the node
+    /// does not exist.
+    pub async fn update_node(
+        &self,
+        node: NodeRef,
+        properties: &[PropertyEntry],
+    ) -> Result<(), ClientError> {
+        let req = graph_proto::UpdateNodeRequest {
+            node: Some(Self::node_ref_to_proto(&node)),
+            props: properties.iter().map(Self::property_to_proto).collect(),
+        };
+        self.client.clone().update_node(req).await.map_err(ClientError::from)?;
+        Ok(())
+    }
+
+    /// Delete a node by reference.
+    ///
+    /// Removes the node (and tombstones it so its external id no longer
+    /// resolves). Edge cleanup follows the engine's deletion semantics.
+    pub async fn delete_node(&self, node: NodeRef) -> Result<(), ClientError> {
+        let req = graph_proto::DeleteNodeRequest {
+            node: Some(Self::node_ref_to_proto(&node)),
+        };
+        self.client.clone().delete_node(req).await.map_err(ClientError::from)?;
+        Ok(())
     }
 
     /// Upsert a compact edge.
@@ -301,6 +331,9 @@ impl GraphClient {
     /// - `limit` 0 = unlimited. `cursor` = neighbor_node_id after which to resume (0 = start).
     /// - `neighbor_filters`: server-side predicates on neighbour node properties; pass `&[]` for unfiltered.
     /// - `include_props`: when true, populate `NeighborEdge::neighbor_props` with all node properties.
+    ///
+    /// To additionally filter on the *edge* itself (created-at range or edge
+    /// properties), use [`GraphClient::get_neighbors_filtered`].
     pub async fn get_neighbors(
         &self,
         node: NodeRef,
@@ -311,12 +344,35 @@ impl GraphClient {
         neighbor_filters: &[NodePropertyFilter],
         include_props: bool,
     ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
+        self.get_neighbors_filtered(
+            node, edge_type, out_neighbors, limit, cursor, neighbor_filters, include_props, None,
+        )
+        .await
+    }
+
+    /// Get neighbors of a node, additionally filtering on the connecting edge.
+    ///
+    /// Same as [`GraphClient::get_neighbors`], plus an optional [`EdgeFilter`]
+    /// applied server-side to each edge (created-at range and/or predicates on
+    /// the edge's own properties). Pass `None` for no edge-level filtering.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_neighbors_filtered(
+        &self,
+        node: NodeRef,
+        edge_type: &str,
+        out_neighbors: bool,
+        limit: u32,
+        cursor: u64,
+        neighbor_filters: &[NodePropertyFilter],
+        include_props: bool,
+        edge_filter: Option<&EdgeFilter>,
+    ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
         let proto_filters = neighbor_filters.iter().map(Self::filter_to_proto).collect();
         let req = graph_proto::NeighborQuery {
             node: Some(Self::node_ref_to_proto(&node)),
             edge_type: edge_type.to_string(),
             out_neighbors,
-            filter: None,
+            filter: edge_filter.map(Self::edge_filter_to_proto),
             limit,
             cursor,
             neighbor_filters: proto_filters,
@@ -367,6 +423,14 @@ impl GraphClient {
         graph_proto::PropertyPredicate {
             property_name: f.property.clone(),
             predicate,
+        }
+    }
+
+    fn edge_filter_to_proto(f: &EdgeFilter) -> graph_proto::EdgeFilter {
+        graph_proto::EdgeFilter {
+            min_created_at_us: f.min_created_at_us,
+            max_created_at_us: f.max_created_at_us,
+            property_filters: f.property_filters.iter().map(Self::filter_to_proto).collect(),
         }
     }
 

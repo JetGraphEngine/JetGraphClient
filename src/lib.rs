@@ -147,6 +147,18 @@ impl Client {
         Ok(Self { channel })
     }
 
+    /// Connect lazily: the channel is created immediately and the TCP
+    /// connection is established on first RPC use. Construction never fails
+    /// because the engine is unreachable — individual RPCs will error (and
+    /// the channel keeps retrying) until the engine comes up.
+    pub fn connect_lazy(endpoint: &str) -> Result<Self, tonic::transport::Error> {
+        let channel = tonic::transport::Endpoint::from_shared(endpoint.to_string())?
+            .tcp_keepalive(Some(Duration::from_secs(30)))
+            .tcp_nodelay(true)
+            .connect_lazy();
+        Ok(Self { channel })
+    }
+
     /// Create from an existing channel (e.g. for connection pooling).
     pub fn from_channel(channel: Channel) -> Self {
         Self { channel }
@@ -189,6 +201,20 @@ impl Client {
         properties: &[PropertyEntry],
     ) -> Result<CreateNodeResult, ClientError> {
         self.graph().create_node(node_type, external_id, properties).await
+    }
+
+    /// Update (merge) properties on an existing node.
+    pub async fn update_node(
+        &self,
+        node: NodeRef,
+        properties: &[PropertyEntry],
+    ) -> Result<(), ClientError> {
+        self.graph().update_node(node, properties).await
+    }
+
+    /// Delete a node by reference.
+    pub async fn delete_node(&self, node: NodeRef) -> Result<(), ClientError> {
+        self.graph().delete_node(node).await
     }
 
     /// Upsert a compact edge.
@@ -309,6 +335,30 @@ impl Client {
     ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
         self.graph().get_neighbors(
             node, edge_type, out_neighbors, limit, cursor, neighbor_filters, include_props,
+        ).await
+    }
+
+    /// Get neighbors of a node, additionally filtering on the connecting edge.
+    ///
+    /// Same as [`Client::get_neighbors`], plus an optional [`EdgeFilter`]
+    /// applied server-side to each edge (created-at range and/or predicates on
+    /// the edge's own properties). Pass `None` for no edge-level filtering.
+    ///
+    /// Returns `(edges, has_more)`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_neighbors_filtered(
+        &self,
+        node: NodeRef,
+        edge_type: &str,
+        out_neighbors: bool,
+        limit: u32,
+        cursor: u64,
+        neighbor_filters: &[NodePropertyFilter],
+        include_props: bool,
+        edge_filter: Option<&EdgeFilter>,
+    ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
+        self.graph().get_neighbors_filtered(
+            node, edge_type, out_neighbors, limit, cursor, neighbor_filters, include_props, edge_filter,
         ).await
     }
 
