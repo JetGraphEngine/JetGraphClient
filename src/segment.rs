@@ -13,13 +13,12 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::transport::Channel;
 
-use crate::{
-    ClientError, NodeRef, NeighborEdge,
-    HistogramField, EdgeStateField,
-    SegmentMembership, SegmentMember,
-};
-use crate::features::{FeatureClient, NodeFeatureVectorResponse, EdgeTypeFeatures};
+use crate::features::{EdgeTypeFeatures, FeatureClient, NodeFeatureVectorResponse};
 use crate::graph::GraphClient;
+use crate::{
+    ClientError, EdgeStateField, HistogramField, NeighborEdge, NodeRef, SegmentMember,
+    SegmentMembership,
+};
 
 // ---------------------------------------------------------------------------
 // EvalContextData — cached result of GetNodeFeatureVector
@@ -91,14 +90,14 @@ impl EvalContextData {
 /// used concurrently alongside `GraphClient` / `FeatureClient`.
 #[derive(Clone)]
 pub struct SegmentClient {
-    graph:    GraphClient,
+    graph: GraphClient,
     features: FeatureClient,
 }
 
 impl SegmentClient {
     pub(crate) fn new(channel: Channel) -> Self {
         Self {
-            graph:    GraphClient::new(channel.clone()),
+            graph: GraphClient::new(channel.clone()),
             features: FeatureClient::new(channel),
         }
     }
@@ -119,13 +118,16 @@ impl SegmentClient {
         histogram_window_hours: u32,
         histogram_window_days: u32,
     ) -> Result<EvalContextData, ClientError> {
-        let fv = self.features.get_node_feature_vector(
-            node,
-            edge_types,
-            histogram_window_hours,
-            histogram_window_days,
-            &[],
-        ).await?;
+        let fv = self
+            .features
+            .get_node_feature_vector(
+                node,
+                edge_types,
+                histogram_window_hours,
+                histogram_window_days,
+                &[],
+            )
+            .await?;
         Ok(EvalContextData {
             node_id: fv.node_id,
             feature_vector: fv,
@@ -161,11 +163,7 @@ impl SegmentClient {
     }
 
     /// `last_neighbor` source type — raw `last_seen_secs` value, or `u32::MAX` if none.
-    pub async fn last_seen_secs(
-        &self,
-        node: NodeRef,
-        edge_type: &str,
-    ) -> Result<f64, ClientError> {
+    pub async fn last_seen_secs(&self, node: NodeRef, edge_type: &str) -> Result<f64, ClientError> {
         match self.graph.get_last_neighbor(node, edge_type, None).await? {
             None => Ok(u32::MAX as f64),
             Some((_neighbor_id, secs)) => Ok(secs as f64),
@@ -173,11 +171,7 @@ impl SegmentClient {
     }
 
     /// `neighbor_count` source type — exact count as f64.
-    pub async fn neighbor_count(
-        &self,
-        node: NodeRef,
-        edge_type: &str,
-    ) -> Result<f64, ClientError> {
+    pub async fn neighbor_count(&self, node: NodeRef, edge_type: &str) -> Result<f64, ClientError> {
         let (count, _approx) = self.graph.get_neighbor_count(node, edge_type).await?;
         Ok(count as f64)
     }
@@ -191,22 +185,20 @@ impl SegmentClient {
         window_days: u32,
         field: HistogramField,
     ) -> Result<f64, ClientError> {
-        let result = self.features
+        let result = self
+            .features
             .query_node_histogram(node, edge_type, window_hours, window_days)
             .await?;
         let value = match field {
             HistogramField::TotalEvents => result.total_events as f64,
-            HistogramField::TotalApproxSum => {
-                result.total_counts.iter().sum::<u32>() as f64
-            }
-            HistogramField::PeakBin => {
-                result.total_counts
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, &v)| v)
-                    .map(|(i, _)| i as f64)
-                    .unwrap_or(0.0)
-            }
+            HistogramField::TotalApproxSum => result.total_counts.iter().sum::<u32>() as f64,
+            HistogramField::PeakBin => result
+                .total_counts
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, &v)| v)
+                .map(|(i, _)| i as f64)
+                .unwrap_or(0.0),
         };
         Ok(value)
     }
@@ -226,11 +218,17 @@ impl SegmentClient {
         for prop in &response.properties {
             if prop.name == property_name {
                 return Ok(match &prop.value {
-                    PropertyValue::Int(v)       => *v as f64,
-                    PropertyValue::Float(v)     => *v,
+                    PropertyValue::Int(v) => *v as f64,
+                    PropertyValue::Float(v) => *v,
                     PropertyValue::Timestamp(v) => *v as f64,
-                    PropertyValue::Bool(v)      => if *v { 1.0 } else { 0.0 },
-                    PropertyValue::String(_)    => 0.0,
+                    PropertyValue::Bool(v) => {
+                        if *v {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    PropertyValue::String(_) => 0.0,
                 });
             }
         }
@@ -250,17 +248,28 @@ impl SegmentClient {
         activity_window_secs: Option<u64>,
     ) -> Result<f64, ClientError> {
         let windows: Vec<u64> = activity_window_secs.map(|w| vec![w]).unwrap_or_default();
-        let state = self.graph.get_edge_state(
-            edge_type, src, dst,
-            None, None, None,
-            if windows.is_empty() { None } else { Some(&windows) },
-        ).await?;
+        let state = self
+            .graph
+            .get_edge_state(
+                edge_type,
+                src,
+                dst,
+                None,
+                None,
+                None,
+                if windows.is_empty() {
+                    None
+                } else {
+                    Some(&windows)
+                },
+            )
+            .await?;
 
         match state {
             None => Ok(0.0),
             Some(s) => Ok(match field {
-                EdgeStateField::TxCount      => s.tx_count as f64,
-                EdgeStateField::ApproxSum    => s.approx_sum as f64,
+                EdgeStateField::TxCount => s.tx_count as f64,
+                EdgeStateField::ApproxSum => s.approx_sum as f64,
                 EdgeStateField::LastSeenSecs => s.last_seen as f64,
                 EdgeStateField::ActivityCount => {
                     s.activity_counts.first().copied().unwrap_or(0) as f64
@@ -284,14 +293,16 @@ impl SegmentClient {
         segment_node: NodeRef,
         confidence: f32,
     ) -> Result<(), ClientError> {
-        self.graph.upsert_edge(
-            "MEMBER_OF",
-            customer,
-            segment_node,
-            Some(confidence),
-            None,
-            None,
-        ).await?;
+        self.graph
+            .upsert_edge(
+                "MEMBER_OF",
+                customer,
+                segment_node,
+                Some(confidence),
+                None,
+                None,
+            )
+            .await?;
         Ok(())
     }
 
@@ -303,29 +314,39 @@ impl SegmentClient {
         &self,
         customer: NodeRef,
     ) -> Result<Vec<SegmentMembership>, ClientError> {
-        let (edges, _has_more) = self.graph.get_neighbors(
-            customer.clone(),
-            "MEMBER_OF",
-            true,  // out_neighbors: customer → segment
-            1000,  // limit
-            0,     // cursor
-            &[],
-            true,  // include props so we get the segment external_id (name)
-        ).await?;
+        let (edges, _has_more) = self
+            .graph
+            .get_neighbors(
+                customer.clone(),
+                "MEMBER_OF",
+                true, // out_neighbors: customer → segment
+                1000, // limit
+                0,    // cursor
+                &[],
+                true, // include props so we get the segment external_id (name)
+            )
+            .await?;
 
         let mut memberships = Vec::new();
         for edge in edges {
             // Read edge state to get confidence (stored as approx_sum on static edge)
-            let state = self.graph.get_edge_state(
-                "MEMBER_OF",
-                customer.clone(),
-                NodeRef::node_id(edge.neighbor_node_id),
-                None, None, None, None,
-            ).await?;
+            let state = self
+                .graph
+                .get_edge_state(
+                    "MEMBER_OF",
+                    customer.clone(),
+                    NodeRef::node_id(edge.neighbor_node_id),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
 
             if let Some(s) = state {
                 if s.approx_sum > 0.0 {
-                    let segment_name = edge.neighbor_external_id
+                    let segment_name = edge
+                        .neighbor_external_id
                         .unwrap_or_else(|| edge.neighbor_node_id.to_string());
                     memberships.push(SegmentMembership {
                         segment_name,
@@ -349,31 +370,40 @@ impl SegmentClient {
         limit: u32,
         cursor: u64,
     ) -> Result<(Vec<SegmentMember>, bool), ClientError> {
-        let (edges, has_more) = self.graph.get_neighbors(
-            segment_node.clone(),
-            "MEMBER_OF",
-            false, // in-neighbors: customers → segment
-            limit,
-            cursor,
-            &[],
-            false,
-        ).await?;
+        let (edges, has_more) = self
+            .graph
+            .get_neighbors(
+                segment_node.clone(),
+                "MEMBER_OF",
+                false, // in-neighbors: customers → segment
+                limit,
+                cursor,
+                &[],
+                false,
+            )
+            .await?;
 
         let mut members = Vec::new();
         for edge in edges {
-            let state = self.graph.get_edge_state(
-                "MEMBER_OF",
-                NodeRef::node_id(edge.neighbor_node_id),
-                segment_node.clone(),
-                None, None, None, None,
-            ).await?;
+            let state = self
+                .graph
+                .get_edge_state(
+                    "MEMBER_OF",
+                    NodeRef::node_id(edge.neighbor_node_id),
+                    segment_node.clone(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
             let (confidence, last_seen_secs) = state
                 .map(|s| (s.approx_sum, s.last_seen))
                 .unwrap_or((0.0, 0));
             if confidence > 0.0 {
                 members.push(SegmentMember {
                     customer_node_id: edge.neighbor_node_id,
-                    external_id:      edge.neighbor_external_id.clone(),
+                    external_id: edge.neighbor_external_id.clone(),
                     confidence,
                     last_seen_secs,
                 });
@@ -393,7 +423,8 @@ impl SegmentClient {
     ) -> Result<Vec<u64>, ClientError> {
         // list_nodes returns up to `limit` nodes; no cursor support, so we use the
         // total_count to decide whether we have everything.
-        let (nodes, _total) = self.graph
+        let (nodes, _total) = self
+            .graph
             .list_nodes(customer_node_type, "", batch_size)
             .await?;
         Ok(nodes.into_iter().map(|n| n.node_id).collect())

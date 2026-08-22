@@ -4,9 +4,7 @@
 //! - node types: card, merchant
 //! - edge type: TRANSACTS_AT (card -> merchant)
 
-use jetgraph_client::{
-    Client, NodeRef, TransactionNode, TransactionNodeRef, TransactionEdge,
-};
+use jetgraph_client::{Client, NodeRef, TransactionEdge, TransactionNode, TransactionNodeRef};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

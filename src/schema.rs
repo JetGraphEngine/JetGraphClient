@@ -1,9 +1,9 @@
 //! Schema service client: register types, finalize.
 
-use tonic::transport::Channel;
 use crate::ClientError;
+use tonic::transport::Channel;
 
-pub(crate) mod schema_proto {
+pub mod schema_proto {
     tonic::include_proto!("schema");
 }
 
@@ -43,7 +43,11 @@ impl SchemaClient {
             name: name.to_string(),
             ext_id_kind,
         };
-        let r = self.client.register_node_type(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .register_node_type(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(r.into_inner().node_type_id)
     }
 
@@ -99,7 +103,11 @@ impl SchemaClient {
             bool_property: bool_property_name.unwrap_or("").to_string(),
             symmetric,
         };
-        let r = self.client.register_compact_edge_type(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .register_compact_edge_type(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(r.into_inner().edge_type_id)
     }
 
@@ -117,7 +125,11 @@ impl SchemaClient {
             owner_is_node,
             value_type: value_type.into(),
         };
-        let r = self.client.register_property(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .register_property(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(r.into_inner().property_id)
     }
 
@@ -131,11 +143,11 @@ impl SchemaClient {
     /// neighbor queries return out ∪ in. Requires `from_node_type == to_node_type`.
     pub async fn register_static_edge_type(
         &mut self,
-        name:            &str,
-        from_node_type:  &str,
-        to_node_type:    &str,
-        state_ttl_secs:  u64,
-        symmetric:       bool,
+        name: &str,
+        from_node_type: &str,
+        to_node_type: &str,
+        state_ttl_secs: u64,
+        symmetric: bool,
     ) -> Result<u32, ClientError> {
         let req = schema_proto::CompactEdgeTypeSpec {
             name: name.to_string(),
@@ -151,7 +163,11 @@ impl SchemaClient {
             bool_property: String::new(), // static edge types cannot have a bool property
             symmetric,
         };
-        let r = self.client.register_compact_edge_type(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .register_compact_edge_type(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(r.into_inner().edge_type_id)
     }
 
@@ -167,11 +183,17 @@ impl SchemaClient {
         &mut self,
         name: &str,
     ) -> Result<RemoveEdgeTypeResult, ClientError> {
-        let req = schema_proto::RemoveEdgeTypeRequest { name: name.to_string() };
-        let r = self.client.remove_edge_type(req).await.map_err(ClientError::from)?;
+        let req = schema_proto::RemoveEdgeTypeRequest {
+            name: name.to_string(),
+        };
+        let r = self
+            .client
+            .remove_edge_type(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok(RemoveEdgeTypeResult {
-            edge_type_id:  inner.edge_type_id,
+            edge_type_id: inner.edge_type_id,
             pairs_dropped: inner.pairs_dropped,
         })
     }
@@ -179,50 +201,169 @@ impl SchemaClient {
     /// Query current memory usage across nodes, edges, histograms, and runtime overhead.
     pub async fn get_memory_usage(&mut self) -> Result<MemoryUsage, ClientError> {
         let req = schema_proto::GetMemoryUsageRequest {};
-        let r = self.client.get_memory_usage(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .get_memory_usage(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         let est = inner.estimate.unwrap_or_default();
         Ok(MemoryUsage {
-            total_bytes:         est.total_bytes,
-            nodes_bytes:         est.nodes_bytes,
+            total_bytes: est.total_bytes,
+            nodes_bytes: est.nodes_bytes,
             compact_store_bytes: est.compact_store_bytes,
-            histogram_bytes:     est.histogram_bytes,
-            runtime_bytes:       est.runtime_bytes,
-            breakdown_text:      est.breakdown_text,
-            node_count:          inner.node_count,
-            compact_pair_count:  inner.compact_pair_count,
+            histogram_bytes: est.histogram_bytes,
+            runtime_bytes: est.runtime_bytes,
+            feature_bytes: est.feature_bytes,
+            breakdown_text: est.breakdown_text,
+            node_count: inner.node_count,
+            compact_pair_count: inner.compact_pair_count,
         })
+    }
+
+    /// Register or replace the versioned deterministic 32D schema for one node
+    /// type.
+    pub async fn register_node_feature_schema(
+        &mut self,
+        spec: schema_proto::NodeFeatureSchemaSpec,
+    ) -> Result<u32, ClientError> {
+        let response = self
+            .client
+            .register_node_feature_schema(spec)
+            .await
+            .map_err(ClientError::from)?;
+        Ok(response.into_inner().version)
+    }
+
+    /// Register a named transaction feature profile and logistic model.
+    ///
+    /// Use [`Self::register_transaction_feature_profile_checked`] when the
+    /// caller should see advisory warnings about saturating weights.
+    pub async fn register_transaction_feature_profile(
+        &mut self,
+        spec: schema_proto::TransactionFeatureProfileSpec,
+    ) -> Result<u32, ClientError> {
+        self.register_transaction_feature_profile_checked(spec)
+            .await
+            .map(|(version, _)| version)
+    }
+
+    /// Register a profile and return its version together with any advisory
+    /// warnings. Registration succeeded either way; a warning means these
+    /// weights would leave the risk score saturated and unable to rank cases.
+    pub async fn register_transaction_feature_profile_checked(
+        &mut self,
+        spec: schema_proto::TransactionFeatureProfileSpec,
+    ) -> Result<(u32, Vec<String>), ClientError> {
+        let response = self
+            .client
+            .register_transaction_feature_profile(spec)
+            .await
+            .map_err(ClientError::from)?
+            .into_inner();
+        Ok((response.version, response.warnings))
+    }
+
+    /// Ask the engine which features are worth keeping for a node type.
+    ///
+    /// The returned schema is compile-legal, fitted to `budget` slots, and
+    /// arrives disabled so the caller decides when it starts costing memory.
+    /// `budget` of zero means the full 32.
+    pub async fn suggest_node_feature_schema(
+        &mut self,
+        node_type: &str,
+        role: schema_proto::NodeRole,
+        budget: u32,
+    ) -> Result<schema_proto::SuggestNodeFeatureSchemaResponse, ClientError> {
+        self.client
+            .suggest_node_feature_schema(schema_proto::SuggestNodeFeatureSchemaRequest {
+                node_type: node_type.to_string(),
+                role: role as i32,
+                budget,
+            })
+            .await
+            .map(|response| response.into_inner())
+            .map_err(ClientError::from)
+    }
+
+    /// Ask the engine for a scoring profile over the enabled feature schemas of
+    /// `node_types`. Weights are scaled so ordinary traffic ranks mid-range.
+    pub async fn suggest_transaction_profile(
+        &mut self,
+        node_types: &[String],
+        role: schema_proto::NodeRole,
+    ) -> Result<Option<schema_proto::TransactionFeatureProfileSpec>, ClientError> {
+        self.client
+            .suggest_transaction_profile(schema_proto::SuggestTransactionProfileRequest {
+                node_types: node_types.to_vec(),
+                role: role as i32,
+            })
+            .await
+            .map(|response| response.into_inner().profile)
+            .map_err(ClientError::from)
+    }
+
+    pub async fn get_feature_configuration(
+        &mut self,
+    ) -> Result<schema_proto::GetFeatureConfigurationResponse, ClientError> {
+        self.client
+            .get_feature_configuration(schema_proto::GetFeatureConfigurationRequest {})
+            .await
+            .map(|response| response.into_inner())
+            .map_err(ClientError::from)
     }
 
     /// Finalize the schema. Call after all types are registered.
     pub async fn finalize(&mut self) -> Result<u32, ClientError> {
         let req = schema_proto::FinalizeRequest {};
-        let r = self.client.finalize_schema(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .finalize_schema(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(r.into_inner().schema_version)
     }
 
     /// Get the current schema.
     pub async fn get_schema(&mut self) -> Result<GetSchemaResult, ClientError> {
         let req = schema_proto::GetSchemaRequest {};
-        let r = self.client.get_schema(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .get_schema(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok(GetSchemaResult {
             schema_version: inner.schema_version,
-            node_types: inner.node_types.into_iter().map(|n| NodeTypeInfo {
-                id: n.id,
-                name: n.name,
-                numeric_ids: n.ext_id_kind != schema_proto::ExternalIdKind::String as i32,
-            }).collect(),
-            edge_types: inner.edge_types.into_iter().map(|e| EdgeTypeInfo {
-                id: e.id,
-                name: e.name,
-                from_node_type: e.from_node_type,
-                to_node_type: e.to_node_type,
-                state_ttl_secs: e.state_ttl_secs,
-                tick_size_secs: e.tick_size_secs,
-                bool_property: if e.bool_property.is_empty() { None } else { Some(e.bool_property) },
-                is_symmetric: e.is_symmetric,
-            }).collect(),
+            node_feature_schemas: inner.node_feature_schemas,
+            transaction_feature_profiles: inner.transaction_feature_profiles,
+            node_types: inner
+                .node_types
+                .into_iter()
+                .map(|n| NodeTypeInfo {
+                    id: n.id,
+                    name: n.name,
+                    numeric_ids: n.ext_id_kind != schema_proto::ExternalIdKind::String as i32,
+                })
+                .collect(),
+            edge_types: inner
+                .edge_types
+                .into_iter()
+                .map(|e| EdgeTypeInfo {
+                    id: e.id,
+                    name: e.name,
+                    from_node_type: e.from_node_type,
+                    to_node_type: e.to_node_type,
+                    state_ttl_secs: e.state_ttl_secs,
+                    tick_size_secs: e.tick_size_secs,
+                    bool_property: if e.bool_property.is_empty() {
+                        None
+                    } else {
+                        Some(e.bool_property)
+                    },
+                    is_symmetric: e.is_symmetric,
+                })
+                .collect(),
         })
     }
 }
@@ -232,6 +373,8 @@ pub struct GetSchemaResult {
     pub schema_version: u32,
     pub node_types: Vec<NodeTypeInfo>,
     pub edge_types: Vec<EdgeTypeInfo>,
+    pub node_feature_schemas: Vec<schema_proto::NodeFeatureSchemaSpec>,
+    pub transaction_feature_profiles: Vec<schema_proto::TransactionFeatureProfileSpec>,
 }
 
 #[derive(Debug, Clone)]
@@ -272,13 +415,14 @@ pub struct RemoveEdgeTypeResult {
 /// Memory usage breakdown returned by [`SchemaClient::get_memory_usage`].
 #[derive(Debug, Clone, Default)]
 pub struct MemoryUsage {
-    pub total_bytes:         u64,
-    pub nodes_bytes:         u64,
+    pub total_bytes: u64,
+    pub nodes_bytes: u64,
     pub compact_store_bytes: u64,
-    pub histogram_bytes:     u64,
-    pub runtime_bytes:       u64,
+    pub histogram_bytes: u64,
+    pub runtime_bytes: u64,
+    pub feature_bytes: u64,
     /// Human-readable per-type breakdown string produced by the engine.
-    pub breakdown_text:      String,
-    pub node_count:          u64,
-    pub compact_pair_count:  u64,
+    pub breakdown_text: String,
+    pub node_count: u64,
+    pub compact_pair_count: u64,
 }

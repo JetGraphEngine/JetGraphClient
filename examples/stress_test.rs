@@ -47,14 +47,11 @@
 
 use std::env;
 use std::error::Error;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use jetgraph_client::{
-    Client, NodeRef,
-    TransactionEdge, TransactionNode, TransactionNodeRef,
-};
+use jetgraph_client::{Client, NodeRef, TransactionEdge, TransactionNode, TransactionNodeRef};
 
 // ─── CLI Config ───────────────────────────────────────────────────────────────
 
@@ -102,9 +99,9 @@ impl Config {
                     i += 1;
                     cfg.endpoint = args.get(i).cloned().ok_or("missing value for --endpoint")?;
                 }
-                "--bootstrap-schema"      => cfg.bootstrap_schema      = true,
-                "--per-worker-connections"=> cfg.per_worker_connections = true,
-                "--compare-connections"   => cfg.compare_connections    = true,
+                "--bootstrap-schema" => cfg.bootstrap_schema = true,
+                "--per-worker-connections" => cfg.per_worker_connections = true,
+                "--compare-connections" => cfg.compare_connections = true,
                 "--phase" => {
                     i += 1;
                     let v = args.get(i).ok_or("missing value for --phase")?;
@@ -118,7 +115,9 @@ impl Config {
                 "--max-concurrency" => {
                     i += 1;
                     let v = args.get(i).ok_or("missing value for --max-concurrency")?;
-                    cfg.max_concurrency = v.parse::<usize>().map_err(|_| "invalid --max-concurrency")?;
+                    cfg.max_concurrency = v
+                        .parse::<usize>()
+                        .map_err(|_| "invalid --max-concurrency")?;
                 }
                 "--pair-count" => {
                     i += 1;
@@ -169,21 +168,29 @@ impl Histogram {
         self.ok_count() + self.errors
     }
     fn error_rate_pct(&self) -> f64 {
-        if self.total() == 0 { return 0.0; }
+        if self.total() == 0 {
+            return 0.0;
+        }
         self.errors as f64 / self.total() as f64 * 100.0
     }
     fn timeout_rate_pct(&self) -> f64 {
-        if self.total() == 0 { return 0.0; }
+        if self.total() == 0 {
+            return 0.0;
+        }
         self.timeouts as f64 / self.total() as f64 * 100.0
     }
     fn percentile_ms(&mut self, pct: f64) -> f64 {
-        if self.samples_us.is_empty() { return 0.0; }
+        if self.samples_us.is_empty() {
+            return 0.0;
+        }
         self.samples_us.sort_unstable();
         let idx = ((pct / 100.0) * (self.samples_us.len() - 1) as f64).round() as usize;
         self.samples_us[idx.min(self.samples_us.len() - 1)] as f64 / 1_000.0
     }
     fn avg_ms(&self) -> f64 {
-        if self.samples_us.is_empty() { return 0.0; }
+        if self.samples_us.is_empty() {
+            return 0.0;
+        }
         self.samples_us.iter().sum::<u64>() as f64 / self.samples_us.len() as f64 / 1_000.0
     }
     fn max_ms(&self) -> f64 {
@@ -194,7 +201,7 @@ impl Histogram {
     }
     fn merge(&mut self, other: Histogram) {
         self.samples_us.extend(other.samples_us);
-        self.errors  += other.errors;
+        self.errors += other.errors;
         self.timeouts += other.timeouts;
     }
 }
@@ -204,7 +211,9 @@ impl Histogram {
 struct Rng(u64);
 
 impl Rng {
-    fn new(seed: u64) -> Self { Self(seed ^ 0x9e37_79b9_7f4a_7c15) }
+    fn new(seed: u64) -> Self {
+        Self(seed ^ 0x9e37_79b9_7f4a_7c15)
+    }
     fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
@@ -216,13 +225,22 @@ impl Rng {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn now_secs() -> u32 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as u32
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as u32
 }
 
-async fn make_clients(endpoint: &str, count: usize, per_worker: bool) -> Result<Vec<Client>, Box<dyn Error>> {
+async fn make_clients(
+    endpoint: &str,
+    count: usize,
+    per_worker: bool,
+) -> Result<Vec<Client>, Box<dyn Error>> {
     if per_worker {
         let mut v = Vec::with_capacity(count);
-        for _ in 0..count { v.push(Client::connect(endpoint).await?); }
+        for _ in 0..count {
+            v.push(Client::connect(endpoint).await?);
+        }
         Ok(v)
     } else {
         let c = Client::connect(endpoint).await?;
@@ -238,23 +256,27 @@ fn print_separator(title: &str) {
 }
 
 fn print_sweep_header() {
-    println!("{:>12}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>8}  {:>8}",
-        "concurrency", "ops/sec", "avg_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms", "err%");
+    println!(
+        "{:>12}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>8}  {:>8}",
+        "concurrency", "ops/sec", "avg_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms", "err%"
+    );
 }
 
 fn print_sweep_row(concurrency: usize, elapsed: Duration, mut hist: Histogram) {
     let tput = hist.throughput(elapsed);
-    let avg  = hist.avg_ms();
-    let p50  = hist.percentile_ms(50.0);
-    let p95  = hist.percentile_ms(95.0);
-    let p99  = hist.percentile_ms(99.0);
-    let max  = hist.max_ms();
-    let err  = hist.error_rate_pct();
+    let avg = hist.avg_ms();
+    let p50 = hist.percentile_ms(50.0);
+    let p95 = hist.percentile_ms(95.0);
+    let p99 = hist.percentile_ms(99.0);
+    let max = hist.max_ms();
+    let err = hist.error_rate_pct();
     println!("{concurrency:>12}  {tput:>10.0}  {avg:>10.3}  {p50:>10.3}  {p95:>10.3}  {p99:>10.3}  {max:>8.3}  {err:>7.2}%");
 }
 
 fn percentile_us(sorted: &[u64], pct: f64) -> u64 {
-    if sorted.is_empty() { return 0; }
+    if sorted.is_empty() {
+        return 0;
+    }
     let idx = ((pct / 100.0) * (sorted.len() - 1) as f64).round() as usize;
     sorted[idx.min(sorted.len() - 1)]
 }
@@ -265,9 +287,9 @@ async fn ensure_schema(client: &Client, bootstrap: bool) -> Result<(), Box<dyn E
     let mut schema = client.schema();
     let state = schema.get_schema().await?;
 
-    let has_card     = state.node_types.iter().any(|n| n.name == "card");
+    let has_card = state.node_types.iter().any(|n| n.name == "card");
     let has_merchant = state.node_types.iter().any(|n| n.name == "merchant");
-    let has_edge     = state.edge_types.iter().any(|e| e.name == "TRANSACTS_AT");
+    let has_edge = state.edge_types.iter().any(|e| e.name == "TRANSACTS_AT");
 
     if has_card && has_merchant && has_edge {
         println!("Schema OK (card, merchant, TRANSACTS_AT already registered).");
@@ -283,15 +305,25 @@ async fn ensure_schema(client: &Client, bootstrap: bool) -> Result<(), Box<dyn E
 
     println!("Bootstrapping schema...");
     let mut s = client.schema();
-    if !has_card     { s.register_node_type("card",     false).await?; }
-    if !has_merchant { s.register_node_type("merchant", false).await?; }
+    if !has_card {
+        s.register_node_type("card", false).await?;
+    }
+    if !has_merchant {
+        s.register_node_type("merchant", false).await?;
+    }
     if !has_edge {
         s.register_compact_edge_type(
-            "TRANSACTS_AT", "card", "merchant",
+            "TRANSACTS_AT",
+            "card",
+            "merchant",
             90 * 86_400,
             vec![10.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_000.0],
-            "amount", 3_600, None, false,
-        ).await?;
+            "amount",
+            3_600,
+            None,
+            false,
+        )
+        .await?;
     }
     s.finalize().await?;
     println!("Schema bootstrap complete.");
@@ -306,30 +338,38 @@ async fn build_workload_pairs(
 ) -> Result<Arc<Vec<(NodeRef, NodeRef)>>, Box<dyn Error>> {
     println!("Provisioning {pair_count} card/merchant node pairs...");
 
-    let sem     = Arc::new(tokio::sync::Semaphore::new(64));
+    let sem = Arc::new(tokio::sync::Semaphore::new(64));
     let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let results: Arc<std::sync::Mutex<Vec<Option<(u64, u64)>>>> =
         Arc::new(std::sync::Mutex::new(vec![None; pair_count]));
 
     let mut handles = Vec::new();
     for _ in 0..64 {
-        let c       = client.clone();
-        let sem     = sem.clone();
+        let c = client.clone();
+        let sem = sem.clone();
         let counter = counter.clone();
         let results = results.clone();
         handles.push(tokio::spawn(async move {
             loop {
                 let idx = counter.fetch_add(1, Ordering::Relaxed);
-                if idx >= pair_count { break; }
+                if idx >= pair_count {
+                    break;
+                }
                 let _permit = sem.acquire().await.unwrap();
-                let src = c.create_node("card",     Some(&format!("stress-card-{idx:08}")),  &[]).await?;
-                let dst = c.create_node("merchant", Some(&format!("stress-merch-{idx:08}")), &[]).await?;
+                let src = c
+                    .create_node("card", Some(&format!("stress-card-{idx:08}")), &[])
+                    .await?;
+                let dst = c
+                    .create_node("merchant", Some(&format!("stress-merch-{idx:08}")), &[])
+                    .await?;
                 results.lock().unwrap()[idx] = Some((src.node_id, dst.node_id));
             }
             Ok::<(), jetgraph_client::ClientError>(())
         }));
     }
-    for h in handles { h.await??; }
+    for h in handles {
+        h.await??;
+    }
 
     let guard = results.lock().unwrap();
     let pairs: Vec<(NodeRef, NodeRef)> = guard
@@ -346,8 +386,16 @@ async fn build_workload_pairs(
     for i in 0..seed_count {
         let (src, dst) = &pairs[i];
         let ts = now_secs().saturating_sub((i as u32) % 86_400);
-        client.upsert_edge("TRANSACTS_AT", src.clone(), dst.clone(),
-            Some((i % 500) as f32 + 1.0), Some(ts), None).await?;
+        client
+            .upsert_edge(
+                "TRANSACTS_AT",
+                src.clone(),
+                dst.clone(),
+                Some((i % 500) as f32 + 1.0),
+                Some(ts),
+                None,
+            )
+            .await?;
     }
     println!("  {seed_count} seed edges written.");
     Ok(Arc::new(pairs))
@@ -359,7 +407,10 @@ async fn build_workload_pairs(
 //  at the end to directly quantify the h2 connection bottleneck.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn phase1_write_sweep(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> Result<(), Box<dyn Error>> {
+async fn phase1_write_sweep(
+    cfg: &Config,
+    pairs: Arc<Vec<(NodeRef, NodeRef)>>,
+) -> Result<(), Box<dyn Error>> {
     print_separator("PHASE 1 — Write Throughput Sweep (upsert_edge)");
     println!("Gradually increase concurrent writers. Find saturation point.\n");
     print_sweep_header();
@@ -369,38 +420,51 @@ async fn phase1_write_sweep(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -
 
     // Track the final sweep step's metrics for the connection comparison.
     let mut last_tput = 0.0f64;
-    let mut last_p99  = 0.0f64;
-    let mut last_err  = 0.0f64;
+    let mut last_p99 = 0.0f64;
+    let mut last_err = 0.0f64;
 
     for &concurrency in &cfg.concurrency_ladder() {
-        let clients  = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
+        let clients = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
         let duration = Duration::from_secs(cfg.step_secs);
         let deadline = Instant::now() + duration;
-        let lats: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
+        let lats: Arc<std::sync::Mutex<Histogram>> =
+            Arc::new(std::sync::Mutex::new(Histogram::default()));
         let mut handles = Vec::new();
 
         for (wid, client) in clients.into_iter().enumerate() {
-            let pairs     = pairs.clone();
-            let lats      = lats.clone();
+            let pairs = pairs.clone();
+            let lats = lats.clone();
             let edge_type = "TRANSACTS_AT".to_string();
             handles.push(tokio::spawn(async move {
-                let mut rng   = Rng::new(wid as u64 + 0xDEAD);
+                let mut rng = Rng::new(wid as u64 + 0xDEAD);
                 let mut local = Histogram::default();
                 while Instant::now() < deadline {
-                    let si  = rng.next() as usize % pairs.len();
-                    let di  = rng.next() as usize % pairs.len();
+                    let si = rng.next() as usize % pairs.len();
+                    let di = rng.next() as usize % pairs.len();
                     let val = 1.0 + (rng.next() % 999) as f32;
-                    let ts  = now_secs().saturating_sub((rng.next() as u32) % 86_400);
-                    let t0  = Instant::now();
-                    match client.upsert_edge(&edge_type, pairs[si].0.clone(), pairs[di].1.clone(), Some(val), Some(ts), None).await {
-                        Ok(_)  => local.record_ok(t0.elapsed().as_micros() as u64),
+                    let ts = now_secs().saturating_sub((rng.next() as u32) % 86_400);
+                    let t0 = Instant::now();
+                    match client
+                        .upsert_edge(
+                            &edge_type,
+                            pairs[si].0.clone(),
+                            pairs[di].1.clone(),
+                            Some(val),
+                            Some(ts),
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => local.record_ok(t0.elapsed().as_micros() as u64),
                         Err(_) => local.record_err(),
                     }
                 }
                 lats.lock().unwrap().merge(local);
             }));
         }
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
 
         let elapsed = duration;
         let mut guard = lats.lock().unwrap();
@@ -408,8 +472,8 @@ async fn phase1_write_sweep(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -
 
         // Save metrics before hist is consumed by print_sweep_row.
         last_tput = tput;
-        last_p99  = guard.percentile_ms(99.0);
-        last_err  = guard.error_rate_pct();
+        last_p99 = guard.percentile_ms(99.0);
+        last_err = guard.error_rate_pct();
 
         if concurrency > 1 && prev_tput > 0.0 && (tput - prev_tput) / prev_tput < 0.05 {
             if saturation_concurrency.is_none() {
@@ -438,45 +502,74 @@ async fn phase1_write_sweep(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -
         println!("  One extra step with per-worker connections to isolate the h2 bottleneck.\n");
 
         let clients_pw = make_clients(&cfg.endpoint, concurrency, true).await?;
-        let duration   = Duration::from_secs(cfg.step_secs);
-        let deadline   = Instant::now() + duration;
-        let lats_pw: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
+        let duration = Duration::from_secs(cfg.step_secs);
+        let deadline = Instant::now() + duration;
+        let lats_pw: Arc<std::sync::Mutex<Histogram>> =
+            Arc::new(std::sync::Mutex::new(Histogram::default()));
         let mut handles = Vec::new();
 
         for (wid, client) in clients_pw.into_iter().enumerate() {
-            let pairs     = pairs.clone();
-            let lats      = lats_pw.clone();
+            let pairs = pairs.clone();
+            let lats = lats_pw.clone();
             let edge_type = "TRANSACTS_AT".to_string();
             handles.push(tokio::spawn(async move {
-                let mut rng   = Rng::new(wid as u64 + 0xC0DE);
+                let mut rng = Rng::new(wid as u64 + 0xC0DE);
                 let mut local = Histogram::default();
                 while Instant::now() < deadline {
-                    let si  = rng.next() as usize % pairs.len();
-                    let di  = rng.next() as usize % pairs.len();
+                    let si = rng.next() as usize % pairs.len();
+                    let di = rng.next() as usize % pairs.len();
                     let val = 1.0 + (rng.next() % 999) as f32;
-                    let ts  = now_secs().saturating_sub((rng.next() as u32) % 86_400);
-                    let t0  = Instant::now();
-                    match client.upsert_edge(&edge_type, pairs[si].0.clone(), pairs[di].1.clone(), Some(val), Some(ts), None).await {
-                        Ok(_)  => local.record_ok(t0.elapsed().as_micros() as u64),
+                    let ts = now_secs().saturating_sub((rng.next() as u32) % 86_400);
+                    let t0 = Instant::now();
+                    match client
+                        .upsert_edge(
+                            &edge_type,
+                            pairs[si].0.clone(),
+                            pairs[di].1.clone(),
+                            Some(val),
+                            Some(ts),
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => local.record_ok(t0.elapsed().as_micros() as u64),
                         Err(_) => local.record_err(),
                     }
                 }
                 lats.lock().unwrap().merge(local);
             }));
         }
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
 
         let mut pw_guard = lats_pw.lock().unwrap();
         let pw_tput = pw_guard.throughput(duration);
-        let pw_p99  = pw_guard.percentile_ms(99.0);
-        let pw_err  = pw_guard.error_rate_pct();
+        let pw_p99 = pw_guard.percentile_ms(99.0);
+        let pw_err = pw_guard.error_rate_pct();
         drop(pw_guard);
 
-        println!("  {:>28}  {:>12}  {:>10}  {:>8}", "connection_mode", "ops/sec", "p99_ms", "err%");
-        println!("  {:>28}  {:>12.0}  {:>10.3}  {:>7.2}%", "shared  (1 TCP conn)", last_tput, last_p99, last_err);
-        println!("  {:>28}  {:>12.0}  {:>10.3}  {:>7.2}%", format!("per-worker ({concurrency} conns)"), pw_tput, pw_p99, pw_err);
+        println!(
+            "  {:>28}  {:>12}  {:>10}  {:>8}",
+            "connection_mode", "ops/sec", "p99_ms", "err%"
+        );
+        println!(
+            "  {:>28}  {:>12.0}  {:>10.3}  {:>7.2}%",
+            "shared  (1 TCP conn)", last_tput, last_p99, last_err
+        );
+        println!(
+            "  {:>28}  {:>12.0}  {:>10.3}  {:>7.2}%",
+            format!("per-worker ({concurrency} conns)"),
+            pw_tput,
+            pw_p99,
+            pw_err
+        );
 
-        let delta_pct = if last_tput > 0.0 { (pw_tput - last_tput) / last_tput * 100.0 } else { 0.0 };
+        let delta_pct = if last_tput > 0.0 {
+            (pw_tput - last_tput) / last_tput * 100.0
+        } else {
+            0.0
+        };
         let verdict = if delta_pct > 5.0 {
             "h2 connection IS the bottleneck → use per-worker connections in production"
         } else {
@@ -485,7 +578,9 @@ async fn phase1_write_sweep(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -
         println!("\n  Throughput delta: {:+.1}%", delta_pct);
         println!("  Verdict: {verdict}");
     } else if !cfg.compare_connections {
-        println!("  (Add --compare-connections to run shared vs. per-worker connection comparison)");
+        println!(
+            "  (Add --compare-connections to run shared vs. per-worker connection comparison)"
+        );
     }
 
     Ok(())
@@ -495,7 +590,10 @@ async fn phase1_write_sweep(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -
 //  PHASE 2: Read Throughput Sweep
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn phase2_read_sweep(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> Result<(), Box<dyn Error>> {
+async fn phase2_read_sweep(
+    cfg: &Config,
+    pairs: Arc<Vec<(NodeRef, NodeRef)>>,
+) -> Result<(), Box<dyn Error>> {
     print_separator("PHASE 2 — Read Throughput Sweep (get_edge_state)");
     println!("Gradually increase concurrent readers. Find saturation point.\n");
     print_sweep_header();
@@ -504,32 +602,44 @@ async fn phase2_read_sweep(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) ->
     let mut saturation_concurrency: Option<usize> = None;
 
     for &concurrency in &cfg.concurrency_ladder() {
-        let clients  = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
+        let clients = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
         let duration = Duration::from_secs(cfg.step_secs);
         let deadline = Instant::now() + duration;
-        let lats: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
+        let lats: Arc<std::sync::Mutex<Histogram>> =
+            Arc::new(std::sync::Mutex::new(Histogram::default()));
         let mut handles = Vec::new();
 
         for (wid, client) in clients.into_iter().enumerate() {
-            let pairs     = pairs.clone();
-            let lats      = lats.clone();
+            let pairs = pairs.clone();
+            let lats = lats.clone();
             let edge_type = "TRANSACTS_AT".to_string();
             handles.push(tokio::spawn(async move {
-                let mut rng   = Rng::new(wid as u64 + 0xBEEF);
+                let mut rng = Rng::new(wid as u64 + 0xBEEF);
                 let mut local = Histogram::default();
                 while Instant::now() < deadline {
                     let si = rng.next() as usize % pairs.len();
                     let di = rng.next() as usize % pairs.len();
                     let t0 = Instant::now();
-                    match client.get_edge_state(&edge_type, pairs[si].0.clone(), pairs[di].1.clone(), None, None).await {
-                        Ok(_)  => local.record_ok(t0.elapsed().as_micros() as u64),
+                    match client
+                        .get_edge_state(
+                            &edge_type,
+                            pairs[si].0.clone(),
+                            pairs[di].1.clone(),
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => local.record_ok(t0.elapsed().as_micros() as u64),
                         Err(_) => local.record_err(),
                     }
                 }
                 lats.lock().unwrap().merge(local);
             }));
         }
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
 
         let elapsed = duration;
         let mut guard = lats.lock().unwrap();
@@ -567,16 +677,18 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
     print_separator("PHASE 3 — Streaming Ingest Stress (IngestStream RPC)");
     println!("Workers use production reconnection loop. Pipeline depth 4 → 256.\n");
 
-    const WORKERS:    usize = 8;
-    const DURATION_S: u64   = 10;
+    const WORKERS: usize = 8;
+    const DURATION_S: u64 = 10;
 
-    println!("{:>16}  {:>12}  {:>12}  {:>12}  {:>12}  {:>10}  {:>12}",
-        "pipeline_depth", "edges/sec", "tx/sec", "p50_us", "p99_us", "fallback%", "reconnects");
+    println!(
+        "{:>16}  {:>12}  {:>12}  {:>12}  {:>12}  {:>10}  {:>12}",
+        "pipeline_depth", "edges/sec", "tx/sec", "p50_us", "p99_us", "fallback%", "reconnects"
+    );
 
     for &pipeline in &[4usize, 8, 16, 32, 64, 128, 256] {
-        let total_edges     = Arc::new(AtomicU64::new(0));
-        let total_txns      = Arc::new(AtomicU64::new(0));
-        let total_fallback  = Arc::new(AtomicU64::new(0));
+        let total_edges = Arc::new(AtomicU64::new(0));
+        let total_txns = Arc::new(AtomicU64::new(0));
+        let total_fallback = Arc::new(AtomicU64::new(0));
         let total_reconnects = Arc::new(AtomicU64::new(0));
         let lat_data: Arc<std::sync::Mutex<Vec<u64>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
 
@@ -584,25 +696,30 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
         let mut handles = Vec::new();
 
         for wid in 0..WORKERS {
-            let ep          = cfg.endpoint.clone();
-            let te          = total_edges.clone();
-            let tt          = total_txns.clone();
-            let tf          = total_fallback.clone();
-            let tr          = total_reconnects.clone();
-            let ld          = lat_data.clone();
+            let ep = cfg.endpoint.clone();
+            let te = total_edges.clone();
+            let tt = total_txns.clone();
+            let tf = total_fallback.clone();
+            let tr = total_reconnects.clone();
+            let ld = lat_data.clone();
 
             handles.push(tokio::spawn(async move {
                 // CLIENT CHANGE: sequence persists across reconnections so
                 // tx_ids remain unique after a stream drop and reconnect.
                 let mut total_seq = 0u64;
-                let mut backoff   = Duration::from_millis(100);
+                let mut backoff = Duration::from_millis(100);
 
                 'reconnect: loop {
-                    if Instant::now() >= deadline { break; }
+                    if Instant::now() >= deadline {
+                        break;
+                    }
 
                     // Connect with exponential backoff on failure.
                     let client = match Client::connect(&ep).await {
-                        Ok(c)  => { backoff = Duration::from_millis(100); c }
+                        Ok(c) => {
+                            backoff = Duration::from_millis(100);
+                            c
+                        }
                         Err(e) => {
                             eprintln!("  [w{wid}] connect: {e}, retry in {backoff:?}");
                             tokio::time::sleep(backoff).await;
@@ -613,7 +730,7 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
 
                     // Open bidirectional stream with backoff on failure.
                     let (tx, resp) = match client.ingest_stream().await {
-                        Ok(p)  => p,
+                        Ok(p) => p,
                         Err(e) => {
                             eprintln!("  [w{wid}] ingest_stream: {e}, retry");
                             tokio::time::sleep(backoff).await;
@@ -623,12 +740,12 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
                     };
 
                     // Fresh pipeline semaphore for this stream session.
-                    let sem  = Arc::new(tokio::sync::Semaphore::new(pipeline));
+                    let sem = Arc::new(tokio::sync::Semaphore::new(pipeline));
                     let sem2 = sem.clone();
-                    let te2  = te.clone();
-                    let tf2  = tf.clone();
-                    let tt2  = tt.clone();
-                    let ld2  = ld.clone();
+                    let te2 = te.clone();
+                    let tf2 = tf.clone();
+                    let tt2 = tt.clone();
+                    let ld2 = ld.clone();
 
                     // Drain responses in a separate task, returning permits.
                     let drain = tokio::spawn(async move {
@@ -636,51 +753,66 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
                         let mut responses = resp;
                         while let Some(Ok(r)) = responses.next().await {
                             sem2.add_permits(1);
-                            te2.fetch_add((r.edges_created + r.edges_updated) as u64, Ordering::Relaxed);
+                            te2.fetch_add(
+                                (r.edges_created + r.edges_updated) as u64,
+                                Ordering::Relaxed,
+                            );
                             tt2.fetch_add(1, Ordering::Relaxed);
-                            if r.edge_errors > 0 { tf2.fetch_add(1, Ordering::Relaxed); }
+                            if r.edge_errors > 0 {
+                                tf2.fetch_add(1, Ordering::Relaxed);
+                            }
                             let us = t_prev.elapsed().as_micros() as u64;
                             t_prev = Instant::now();
-                            if us < 1_000_000 { ld2.lock().unwrap().push(us); }
+                            if us < 1_000_000 {
+                                ld2.lock().unwrap().push(us);
+                            }
                         }
                     });
 
-                    let card_base     = (wid as u64) * 100_000;
+                    let card_base = (wid as u64) * 100_000;
                     let merchant_base = (wid as u64) * 200_000;
 
                     // Send until deadline or until the stream drops.
                     // Returns true if stream broke (needs reconnect), false if deadline was reached cleanly.
                     let stream_broken = loop {
-                        if Instant::now() >= deadline { break false; }
+                        if Instant::now() >= deadline {
+                            break false;
+                        }
 
                         let permit = match sem.acquire().await {
-                            Ok(p)  => p,
+                            Ok(p) => p,
                             Err(_) => break false,
                         };
 
-                        let seq         = total_seq;
-                        let card_id     = card_base + (seq % 10_000);
+                        let seq = total_seq;
+                        let card_id = card_base + (seq % 10_000);
                         let merchant_id = merchant_base + (seq % 50_000);
-                        let tx_id       = format!("s{wid}-{seq}");
-                        let val         = 1.0 + (seq % 500) as f32;
-                        let ts          = now_secs().saturating_sub((seq as u32) % 86_400);
+                        let tx_id = format!("s{wid}-{seq}");
+                        let val = 1.0 + (seq % 500) as f32;
+                        let ts = now_secs().saturating_sub((seq as u32) % 86_400);
 
                         let mut edge = TransactionEdge::new(
                             "TRANSACTS_AT",
                             TransactionNodeRef::request_node_key("c"),
                             TransactionNodeRef::request_node_key("m"),
-                        ).with_key("e0");
+                        )
+                        .with_key("e0");
                         edge.numeric_value = Some(val);
                         edge.event_ts_secs = Some(ts);
 
-                        if tx.send(
-                            Some(&tx_id),
-                            &[
-                                TransactionNode::new("card",     card_id.to_string()).with_key("c"),
-                                TransactionNode::new("merchant", merchant_id.to_string()).with_key("m"),
-                            ],
-                            &[edge],
-                        ).await.is_err() {
+                        if tx
+                            .send(
+                                Some(&tx_id),
+                                &[
+                                    TransactionNode::new("card", card_id.to_string()).with_key("c"),
+                                    TransactionNode::new("merchant", merchant_id.to_string())
+                                        .with_key("m"),
+                                ],
+                                &[edge],
+                            )
+                            .await
+                            .is_err()
+                        {
                             // Server closed the stream — reconnect.
                             break true;
                         }
@@ -704,15 +836,21 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
             }));
         }
 
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
 
-        let edges      = total_edges.load(Ordering::Relaxed);
-        let txns       = total_txns.load(Ordering::Relaxed);
-        let fallback   = total_fallback.load(Ordering::Relaxed);
+        let edges = total_edges.load(Ordering::Relaxed);
+        let txns = total_txns.load(Ordering::Relaxed);
+        let fallback = total_fallback.load(Ordering::Relaxed);
         let reconnects = total_reconnects.load(Ordering::Relaxed);
-        let edge_tput  = edges as f64 / DURATION_S as f64;
-        let tx_tput    = txns  as f64 / DURATION_S as f64;
-        let fb_pct     = if txns > 0 { fallback as f64 / txns as f64 * 100.0 } else { 0.0 };
+        let edge_tput = edges as f64 / DURATION_S as f64;
+        let tx_tput = txns as f64 / DURATION_S as f64;
+        let fb_pct = if txns > 0 {
+            fallback as f64 / txns as f64 * 100.0
+        } else {
+            0.0
+        };
 
         let mut samples = lat_data.lock().unwrap();
         samples.sort_unstable();
@@ -722,7 +860,9 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
         println!("{pipeline:>16}  {edge_tput:>12.0}  {tx_tput:>12.0}  {p50:>12}  {p99:>12}  {fb_pct:>9.2}%  {reconnects:>12}");
     }
 
-    println!("\n  ► Fallback ratio > 0% = server fell back to sequential processing (batch overflow).");
+    println!(
+        "\n  ► Fallback ratio > 0% = server fell back to sequential processing (batch overflow)."
+    );
     println!("    Reconnects > 0 during a stable test = server-side stream resets under pressure.");
     println!("    Production workers auto-reconnect with exponential backoff (see 'reconnect' loop above).");
     Ok(())
@@ -732,39 +872,65 @@ async fn phase3_streaming_stress(cfg: &Config) -> Result<(), Box<dyn Error>> {
 //  PHASE 4: Mixed Read/Write Contention
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn phase4_mixed_contention(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> Result<(), Box<dyn Error>> {
+async fn phase4_mixed_contention(
+    cfg: &Config,
+    pairs: Arc<Vec<(NodeRef, NodeRef)>>,
+) -> Result<(), Box<dyn Error>> {
     print_separator("PHASE 4 — Mixed Read/Write Contention");
-    println!("Fixed total concurrency={}, three R/W ratios. Exposes RCU contention.\n",
-        cfg.max_concurrency.min(64));
+    println!(
+        "Fixed total concurrency={}, three R/W ratios. Exposes RCU contention.\n",
+        cfg.max_concurrency.min(64)
+    );
 
     let total_concurrency = cfg.max_concurrency.min(64);
     let duration = Duration::from_secs(cfg.step_secs * 2);
 
-    println!("{:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}",
-        "rw_ratio", "write_ops/s", "w_p99_ms", "read_ops/s", "r_p99_ms", "w_err%", "r_err%");
+    println!(
+        "{:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}",
+        "rw_ratio", "write_ops/s", "w_p99_ms", "read_ops/s", "r_p99_ms", "w_err%", "r_err%"
+    );
 
-    for (write_frac, read_frac, label) in [(0.8, 0.2, "80w/20r"), (0.5, 0.5, "50w/50r"), (0.2, 0.8, "20w/80r")] {
+    for (write_frac, read_frac, label) in [
+        (0.8, 0.2, "80w/20r"),
+        (0.5, 0.5, "50w/50r"),
+        (0.2, 0.8, "20w/80r"),
+    ] {
         let write_workers = ((total_concurrency as f64 * write_frac) as usize).max(1);
-        let read_workers  = ((total_concurrency as f64 * read_frac)  as usize).max(1);
+        let read_workers = ((total_concurrency as f64 * read_frac) as usize).max(1);
 
         let deadline = Instant::now() + duration;
-        let w_lats: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
-        let r_lats: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
+        let w_lats: Arc<std::sync::Mutex<Histogram>> =
+            Arc::new(std::sync::Mutex::new(Histogram::default()));
+        let r_lats: Arc<std::sync::Mutex<Histogram>> =
+            Arc::new(std::sync::Mutex::new(Histogram::default()));
         let mut handles = Vec::new();
 
-        let write_clients = make_clients(&cfg.endpoint, write_workers, cfg.per_worker_connections).await?;
+        let write_clients =
+            make_clients(&cfg.endpoint, write_workers, cfg.per_worker_connections).await?;
         for (wid, client) in write_clients.into_iter().enumerate() {
-            let pairs = pairs.clone(); let w_lats = w_lats.clone();
+            let pairs = pairs.clone();
+            let w_lats = w_lats.clone();
             let edge_type = "TRANSACTS_AT".to_string();
             handles.push(tokio::spawn(async move {
-                let mut rng = Rng::new(wid as u64 + 0x1234); let mut local = Histogram::default();
+                let mut rng = Rng::new(wid as u64 + 0x1234);
+                let mut local = Histogram::default();
                 while Instant::now() < deadline {
-                    let si  = rng.next() as usize % pairs.len();
-                    let di  = rng.next() as usize % pairs.len();
+                    let si = rng.next() as usize % pairs.len();
+                    let di = rng.next() as usize % pairs.len();
                     let val = 1.0 + (rng.next() % 499) as f32;
-                    let t0  = Instant::now();
-                    match client.upsert_edge(&edge_type, pairs[si].0.clone(), pairs[di].1.clone(), Some(val), None, None).await {
-                        Ok(_)  => local.record_ok(t0.elapsed().as_micros() as u64),
+                    let t0 = Instant::now();
+                    match client
+                        .upsert_edge(
+                            &edge_type,
+                            pairs[si].0.clone(),
+                            pairs[di].1.clone(),
+                            Some(val),
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => local.record_ok(t0.elapsed().as_micros() as u64),
                         Err(_) => local.record_err(),
                     }
                 }
@@ -772,18 +938,30 @@ async fn phase4_mixed_contention(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
             }));
         }
 
-        let read_clients = make_clients(&cfg.endpoint, read_workers, cfg.per_worker_connections).await?;
+        let read_clients =
+            make_clients(&cfg.endpoint, read_workers, cfg.per_worker_connections).await?;
         for (rid, client) in read_clients.into_iter().enumerate() {
-            let pairs = pairs.clone(); let r_lats = r_lats.clone();
+            let pairs = pairs.clone();
+            let r_lats = r_lats.clone();
             let edge_type = "TRANSACTS_AT".to_string();
             handles.push(tokio::spawn(async move {
-                let mut rng = Rng::new(rid as u64 + 0xABCD); let mut local = Histogram::default();
+                let mut rng = Rng::new(rid as u64 + 0xABCD);
+                let mut local = Histogram::default();
                 while Instant::now() < deadline {
                     let si = rng.next() as usize % pairs.len();
                     let di = rng.next() as usize % pairs.len();
                     let t0 = Instant::now();
-                    match client.get_edge_state(&edge_type, pairs[si].0.clone(), pairs[di].1.clone(), None, None).await {
-                        Ok(_)  => local.record_ok(t0.elapsed().as_micros() as u64),
+                    match client
+                        .get_edge_state(
+                            &edge_type,
+                            pairs[si].0.clone(),
+                            pairs[di].1.clone(),
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => local.record_ok(t0.elapsed().as_micros() as u64),
                         Err(_) => local.record_err(),
                     }
                 }
@@ -791,12 +969,18 @@ async fn phase4_mixed_contention(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
             }));
         }
 
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
 
         let mut wg = w_lats.lock().unwrap();
         let mut rg = r_lats.lock().unwrap();
-        let w_tput = wg.throughput(duration); let w_p99 = wg.percentile_ms(99.0); let w_err = wg.error_rate_pct();
-        let r_tput = rg.throughput(duration); let r_p99 = rg.percentile_ms(99.0); let r_err = rg.error_rate_pct();
+        let w_tput = wg.throughput(duration);
+        let w_p99 = wg.percentile_ms(99.0);
+        let w_err = wg.error_rate_pct();
+        let r_tput = rg.throughput(duration);
+        let r_p99 = rg.percentile_ms(99.0);
+        let r_err = rg.error_rate_pct();
         println!("{label:>10}  {w_tput:>12.0}  {w_p99:>12.3}  {r_tput:>12.0}  {r_p99:>12.3}  {w_err:>11.2}%  {r_err:>11.2}%");
     }
 
@@ -809,42 +993,60 @@ async fn phase4_mixed_contention(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
 //  PHASE 5: Hot-Node Fan-In Contention
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn phase5_hot_node(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> Result<(), Box<dyn Error>> {
+async fn phase5_hot_node(
+    cfg: &Config,
+    pairs: Arc<Vec<(NodeRef, NodeRef)>>,
+) -> Result<(), Box<dyn Error>> {
     print_separator("PHASE 5 — Hot-Node Fan-In Contention");
     println!("All workers write to a single destination node. Surfaces per-node lock pressure.\n");
 
     let hot_dst = pairs[0].1.clone();
-    println!("{:>12}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>8}",
-        "concurrency", "ops/sec", "avg_ms", "p50_ms", "p95_ms", "p99_ms", "err%");
+    println!(
+        "{:>12}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>8}",
+        "concurrency", "ops/sec", "avg_ms", "p50_ms", "p95_ms", "p99_ms", "err%"
+    );
 
     for &concurrency in &cfg.concurrency_ladder() {
-        let clients  = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
+        let clients = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
         let duration = Duration::from_secs(cfg.step_secs);
         let deadline = Instant::now() + duration;
-        let lats: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
+        let lats: Arc<std::sync::Mutex<Histogram>> =
+            Arc::new(std::sync::Mutex::new(Histogram::default()));
         let mut handles = Vec::new();
 
         for (wid, client) in clients.into_iter().enumerate() {
-            let pairs     = pairs.clone();
-            let hot_dst   = hot_dst.clone();
-            let lats      = lats.clone();
+            let pairs = pairs.clone();
+            let hot_dst = hot_dst.clone();
+            let lats = lats.clone();
             let edge_type = "TRANSACTS_AT".to_string();
             handles.push(tokio::spawn(async move {
-                let mut rng   = Rng::new(wid as u64 + 0xF00D);
+                let mut rng = Rng::new(wid as u64 + 0xF00D);
                 let mut local = Histogram::default();
                 while Instant::now() < deadline {
-                    let si  = rng.next() as usize % pairs.len();
+                    let si = rng.next() as usize % pairs.len();
                     let val = 1.0 + (rng.next() % 999) as f32;
-                    let t0  = Instant::now();
-                    match client.upsert_edge(&edge_type, pairs[si].0.clone(), hot_dst.clone(), Some(val), None, None).await {
-                        Ok(_)  => local.record_ok(t0.elapsed().as_micros() as u64),
+                    let t0 = Instant::now();
+                    match client
+                        .upsert_edge(
+                            &edge_type,
+                            pairs[si].0.clone(),
+                            hot_dst.clone(),
+                            Some(val),
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => local.record_ok(t0.elapsed().as_micros() as u64),
                         Err(_) => local.record_err(),
                     }
                 }
                 lats.lock().unwrap().merge(local);
             }));
         }
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
 
         let hist = std::mem::take(&mut *lats.lock().unwrap());
         print_sweep_row(concurrency, duration, hist);
@@ -863,20 +1065,26 @@ async fn phase5_hot_node(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> R
 //  eliminated for free with concurrent spawns in production fraud-ring code.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn phase6_multi_hop(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> Result<(), Box<dyn Error>> {
+async fn phase6_multi_hop(
+    cfg: &Config,
+    pairs: Arc<Vec<(NodeRef, NodeRef)>>,
+) -> Result<(), Box<dyn Error>> {
     print_separator("PHASE 6 — Multi-Hop Traversal (fraud-ring detection pattern)");
     println!("Hop-2 runs sequentially AND in parallel in each iteration.");
     println!("Directly measures the speedup from the parallel production pattern.\n");
 
     const WORKERS: usize = 16;
-    const LIMIT:   u32   = 50;
+    const LIMIT: u32 = 50;
 
     let duration = Duration::from_secs(cfg.step_secs * 2);
     let deadline = Instant::now() + duration;
 
-    let hop1_lats:    Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
-    let hop2_seq_lats: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
-    let hop2_par_lats: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
+    let hop1_lats: Arc<std::sync::Mutex<Histogram>> =
+        Arc::new(std::sync::Mutex::new(Histogram::default()));
+    let hop2_seq_lats: Arc<std::sync::Mutex<Histogram>> =
+        Arc::new(std::sync::Mutex::new(Histogram::default()));
+    let hop2_par_lats: Arc<std::sync::Mutex<Histogram>> =
+        Arc::new(std::sync::Mutex::new(Histogram::default()));
     let hop1_neighbors = Arc::new(AtomicU64::new(0));
     let hop2_neighbors = Arc::new(AtomicU64::new(0));
 
@@ -884,45 +1092,63 @@ async fn phase6_multi_hop(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> 
     let clients = make_clients(&cfg.endpoint, WORKERS, cfg.per_worker_connections).await?;
 
     for (wid, client) in clients.into_iter().enumerate() {
-        let pairs      = pairs.clone();
-        let h1l        = hop1_lats.clone();
-        let h2sl       = hop2_seq_lats.clone();
-        let h2pl       = hop2_par_lats.clone();
-        let h1n        = hop1_neighbors.clone();
-        let h2n        = hop2_neighbors.clone();
+        let pairs = pairs.clone();
+        let h1l = hop1_lats.clone();
+        let h2sl = hop2_seq_lats.clone();
+        let h2pl = hop2_par_lats.clone();
+        let h1n = hop1_neighbors.clone();
+        let h2n = hop2_neighbors.clone();
 
         handles.push(tokio::spawn(async move {
-            let mut rng   = Rng::new(wid as u64 + 0xCAFE);
-            let mut l1    = Histogram::default();
+            let mut rng = Rng::new(wid as u64 + 0xCAFE);
+            let mut l1 = Histogram::default();
             let mut l2_seq = Histogram::default();
             let mut l2_par = Histogram::default();
 
             while Instant::now() < deadline {
-                let si   = rng.next() as usize % pairs.len();
+                let si = rng.next() as usize % pairs.len();
                 let card = pairs[si].0.clone();
 
                 // ── Hop 1: card → out-neighbors (merchants) ──────────────────
                 let t0 = Instant::now();
-                let merchants = match client.get_neighbors(card.clone(), "TRANSACTS_AT", true, LIMIT, 0, &[], false).await {
+                let merchants = match client
+                    .get_neighbors(card.clone(), "TRANSACTS_AT", true, LIMIT, 0, &[], false)
+                    .await
+                {
                     Ok((edges, _)) => edges,
-                    Err(_) => { l1.record_err(); continue; }
+                    Err(_) => {
+                        l1.record_err();
+                        continue;
+                    }
                 };
                 l1.record_ok(t0.elapsed().as_micros() as u64);
                 h1n.fetch_add(merchants.len() as u64, Ordering::Relaxed);
 
-                if merchants.is_empty() { continue; }
+                if merchants.is_empty() {
+                    continue;
+                }
 
                 let sample_count = merchants.len().min(3);
 
                 // ── Hop 2a: Sequential (baseline — the costly pattern) ────────
                 let t_seq = Instant::now();
                 for merch in &merchants[..sample_count] {
-                    match client.get_neighbors(
-                        NodeRef::node_id(merch.neighbor_node_id),
-                        "TRANSACTS_AT", false, LIMIT, 0, &[], false,
-                    ).await {
-                        Ok(_)  => {}
-                        Err(_) => { l2_seq.record_err(); }
+                    match client
+                        .get_neighbors(
+                            NodeRef::node_id(merch.neighbor_node_id),
+                            "TRANSACTS_AT",
+                            false,
+                            LIMIT,
+                            0,
+                            &[],
+                            false,
+                        )
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(_) => {
+                            l2_seq.record_err();
+                        }
                     }
                 }
                 l2_seq.record_ok(t_seq.elapsed().as_micros() as u64);
@@ -931,23 +1157,34 @@ async fn phase6_multi_hop(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> 
                 // CLIENT CHANGE: spawn one task per merchant so all queries fire
                 // concurrently. Wall-clock time = max(individual latencies)
                 // instead of sum — eliminating the N× amplification for free.
-                let tasks: Vec<_> = merchants[..sample_count].iter().map(|m| {
-                    let c  = client.clone();
-                    let id = m.neighbor_node_id;
-                    tokio::spawn(async move {
-                        c.get_neighbors(
-                            NodeRef::node_id(id),
-                            "TRANSACTS_AT", false, LIMIT, 0, &[], false,
-                        ).await
+                let tasks: Vec<_> = merchants[..sample_count]
+                    .iter()
+                    .map(|m| {
+                        let c = client.clone();
+                        let id = m.neighbor_node_id;
+                        tokio::spawn(async move {
+                            c.get_neighbors(
+                                NodeRef::node_id(id),
+                                "TRANSACTS_AT",
+                                false,
+                                LIMIT,
+                                0,
+                                &[],
+                                false,
+                            )
+                            .await
+                        })
                     })
-                }).collect();
+                    .collect();
 
                 let t_par = Instant::now();
                 let mut hop2_par_count = 0usize;
                 for task in tasks {
                     match task.await {
                         Ok(Ok((edges, _))) => hop2_par_count += edges.len(),
-                        _                  => { l2_par.record_err(); }
+                        _ => {
+                            l2_par.record_err();
+                        }
                     }
                 }
                 l2_par.record_ok(t_par.elapsed().as_micros() as u64);
@@ -959,41 +1196,84 @@ async fn phase6_multi_hop(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> 
             h2pl.lock().unwrap().merge(l2_par);
         }));
     }
-    for h in handles { let _ = h.await; }
+    for h in handles {
+        let _ = h.await;
+    }
 
-    let mut g1   = hop1_lats.lock().unwrap();
-    let mut g2s  = hop2_seq_lats.lock().unwrap();
-    let mut g2p  = hop2_par_lats.lock().unwrap();
+    let mut g1 = hop1_lats.lock().unwrap();
+    let mut g2s = hop2_seq_lats.lock().unwrap();
+    let mut g2p = hop2_par_lats.lock().unwrap();
 
     let hop1_avg = g1.avg_ms();
     let hop2s_avg = g2s.avg_ms();
     let hop2p_avg = g2p.avg_ms();
-    let speedup   = if hop2p_avg > 0.0 { hop2s_avg / hop2p_avg } else { 0.0 };
+    let speedup = if hop2p_avg > 0.0 {
+        hop2s_avg / hop2p_avg
+    } else {
+        0.0
+    };
 
     println!("  Hop 1 (card → merchants):");
     println!("    ops/sec:  {:.0}", g1.throughput(duration));
-    println!("    avg_ms:   {:.3}  p50: {:.3}  p95: {:.3}  p99: {:.3}  max: {:.3}",
-        hop1_avg, g1.percentile_ms(50.0), g1.percentile_ms(95.0), g1.percentile_ms(99.0), g1.max_ms());
+    println!(
+        "    avg_ms:   {:.3}  p50: {:.3}  p95: {:.3}  p99: {:.3}  max: {:.3}",
+        hop1_avg,
+        g1.percentile_ms(50.0),
+        g1.percentile_ms(95.0),
+        g1.percentile_ms(99.0),
+        g1.max_ms()
+    );
     println!("    err%:     {:.2}", g1.error_rate_pct());
-    println!("    avg neighbors/query: {:.1}",
-        if g1.ok_count() > 0 { hop1_neighbors.load(Ordering::Relaxed) as f64 / g1.ok_count() as f64 } else { 0.0 });
+    println!(
+        "    avg neighbors/query: {:.1}",
+        if g1.ok_count() > 0 {
+            hop1_neighbors.load(Ordering::Relaxed) as f64 / g1.ok_count() as f64
+        } else {
+            0.0
+        }
+    );
 
     println!("\n  Hop 2 — Sequential (up to 3 merchants, one-by-one):          ← naive pattern");
-    println!("    avg_ms:   {:.3}  ({:.1}× hop-1)  p50: {:.3}  p99: {:.3}  max: {:.3}",
-        hop2s_avg, if hop1_avg > 0.0 { hop2s_avg / hop1_avg } else { 0.0 },
-        g2s.percentile_ms(50.0), g2s.percentile_ms(99.0), g2s.max_ms());
+    println!(
+        "    avg_ms:   {:.3}  ({:.1}× hop-1)  p50: {:.3}  p99: {:.3}  max: {:.3}",
+        hop2s_avg,
+        if hop1_avg > 0.0 {
+            hop2s_avg / hop1_avg
+        } else {
+            0.0
+        },
+        g2s.percentile_ms(50.0),
+        g2s.percentile_ms(99.0),
+        g2s.max_ms()
+    );
     println!("    err%:     {:.2}", g2s.error_rate_pct());
 
-    println!("\n  Hop 2 — Parallel (tokio::spawn per merchant, concurrent):    ← production pattern");
-    println!("    avg_ms:   {:.3}  ({:.1}× hop-1)  p50: {:.3}  p99: {:.3}  max: {:.3}",
-        hop2p_avg, if hop1_avg > 0.0 { hop2p_avg / hop1_avg } else { 0.0 },
-        g2p.percentile_ms(50.0), g2p.percentile_ms(99.0), g2p.max_ms());
+    println!(
+        "\n  Hop 2 — Parallel (tokio::spawn per merchant, concurrent):    ← production pattern"
+    );
+    println!(
+        "    avg_ms:   {:.3}  ({:.1}× hop-1)  p50: {:.3}  p99: {:.3}  max: {:.3}",
+        hop2p_avg,
+        if hop1_avg > 0.0 {
+            hop2p_avg / hop1_avg
+        } else {
+            0.0
+        },
+        g2p.percentile_ms(50.0),
+        g2p.percentile_ms(99.0),
+        g2p.max_ms()
+    );
     println!("    err%:     {:.2}", g2p.error_rate_pct());
-    println!("    total 2nd-hop neighbors found: {}", hop2_neighbors.load(Ordering::Relaxed));
+    println!(
+        "    total 2nd-hop neighbors found: {}",
+        hop2_neighbors.load(Ordering::Relaxed)
+    );
 
     println!("\n  ┌─────────────────────────────────────────────────────────────┐");
-    println!("  │  Parallel speedup: {speedup:.2}×  ({:.1}% faster per query)       │",
-        (speedup - 1.0) * 100.0);
+    println!(
+        "  │  Parallel speedup: {speedup:.2}×  ({:.1}% faster per query)       │",
+        (speedup - 1.0) * 100.0
+    );
     println!("  │  In production fraud-ring queries, spawn one task per        │");
     println!("  │  neighbor and join_all — latency becomes max, not sum.       │");
     println!("  └─────────────────────────────────────────────────────────────┘");
@@ -1004,54 +1284,71 @@ async fn phase6_multi_hop(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> 
 //  PHASE 7: Failure Boundary (Timeout Injection)
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn phase7_failure_boundary(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> Result<(), Box<dyn Error>> {
+async fn phase7_failure_boundary(
+    cfg: &Config,
+    pairs: Arc<Vec<(NodeRef, NodeRef)>>,
+) -> Result<(), Box<dyn Error>> {
     print_separator("PHASE 7 — Failure Boundary (timeout injection at max concurrency)");
-    println!("Wrap every request with a shrinking timeout. Find the threshold where error% > 1%.\n");
+    println!(
+        "Wrap every request with a shrinking timeout. Find the threshold where error% > 1%.\n"
+    );
 
     let concurrency = cfg.max_concurrency;
-    let duration    = Duration::from_secs(cfg.step_secs);
+    let duration = Duration::from_secs(cfg.step_secs);
 
-    println!("{:>12}  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}",
-        "timeout_ms", "ops/sec", "err%", "timeout%", "avg_ms", "p95_ms", "p99_ms");
+    println!(
+        "{:>12}  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}",
+        "timeout_ms", "ops/sec", "err%", "timeout%", "avg_ms", "p95_ms", "p99_ms"
+    );
 
     for &timeout_ms in &[500u64, 200, 100, 50, 20, 10] {
-        let clients  = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
+        let clients = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
         let deadline = Instant::now() + duration;
-        let lats: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
+        let lats: Arc<std::sync::Mutex<Histogram>> =
+            Arc::new(std::sync::Mutex::new(Histogram::default()));
         let mut handles = Vec::new();
 
         for (wid, client) in clients.into_iter().enumerate() {
-            let pairs     = pairs.clone();
-            let lats      = lats.clone();
+            let pairs = pairs.clone();
+            let lats = lats.clone();
             let edge_type = "TRANSACTS_AT".to_string();
             handles.push(tokio::spawn(async move {
-                let mut rng   = Rng::new(wid as u64 + 0x5EED);
+                let mut rng = Rng::new(wid as u64 + 0x5EED);
                 let mut local = Histogram::default();
                 while Instant::now() < deadline {
-                    let si  = rng.next() as usize % pairs.len();
-                    let di  = rng.next() as usize % pairs.len();
+                    let si = rng.next() as usize % pairs.len();
+                    let di = rng.next() as usize % pairs.len();
                     let val = 1.0 + (rng.next() % 499) as f32;
-                    let t0  = Instant::now();
-                    let fut = client.upsert_edge(&edge_type, pairs[si].0.clone(), pairs[di].1.clone(), Some(val), None, None);
+                    let t0 = Instant::now();
+                    let fut = client.upsert_edge(
+                        &edge_type,
+                        pairs[si].0.clone(),
+                        pairs[di].1.clone(),
+                        Some(val),
+                        None,
+                        None,
+                    );
                     match tokio::time::timeout(Duration::from_millis(timeout_ms), fut).await {
                         Err(_elapsed) => local.record_timeout(),
-                        Ok(Err(_))    => local.record_err(),
-                        Ok(Ok(_))     => local.record_ok(t0.elapsed().as_micros() as u64),
+                        Ok(Err(_)) => local.record_err(),
+                        Ok(Ok(_)) => local.record_ok(t0.elapsed().as_micros() as u64),
                     }
                 }
                 lats.lock().unwrap().merge(local);
             }));
         }
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
 
         let mut guard = lats.lock().unwrap();
-        let tput    = guard.throughput(duration);
+        let tput = guard.throughput(duration);
         let err_pct = guard.error_rate_pct();
-        let to_pct  = guard.timeout_rate_pct();
-        let avg     = guard.avg_ms();
-        let p95     = guard.percentile_ms(95.0);
-        let p99     = guard.percentile_ms(99.0);
-        let marker  = if err_pct > 1.0 { " ◄ SLO BREACH" } else { "" };
+        let to_pct = guard.timeout_rate_pct();
+        let avg = guard.avg_ms();
+        let p95 = guard.percentile_ms(95.0);
+        let p99 = guard.percentile_ms(99.0);
+        let marker = if err_pct > 1.0 { " ◄ SLO BREACH" } else { "" };
         println!("{timeout_ms:>12}  {tput:>10.0}  {err_pct:>9.2}%  {to_pct:>11.2}%  {avg:>12.3}  {p95:>12.3}  {p99:>12.3}{marker}");
     }
 
@@ -1070,77 +1367,102 @@ async fn phase7_failure_boundary(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
 //  acquires one slot for up to 256 transactions — same semaphore, more work.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn phase8_streaming_vs_rpc(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)>>) -> Result<(), Box<dyn Error>> {
+async fn phase8_streaming_vs_rpc(
+    cfg: &Config,
+    pairs: Arc<Vec<(NodeRef, NodeRef)>>,
+) -> Result<(), Box<dyn Error>> {
     print_separator("PHASE 8 — Streaming vs. Individual RPC (write path comparison)");
     println!("Same workers, same duration. Streaming uses pipeline=64 with reconnection loop.");
     println!("This directly quantifies why streaming is the production write path.\n");
 
     let concurrency = cfg.max_concurrency.min(64);
-    let duration    = Duration::from_secs(cfg.step_secs * 2);
+    let duration = Duration::from_secs(cfg.step_secs * 2);
 
     // ── Arm A: Individual upsert_edge RPC ─────────────────────────────────────
-    println!("  [A] Individual upsert_edge (workers={concurrency}, shared_conn={})...",
-        !cfg.per_worker_connections);
+    println!(
+        "  [A] Individual upsert_edge (workers={concurrency}, shared_conn={})...",
+        !cfg.per_worker_connections
+    );
 
-    let rpc_clients  = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
+    let rpc_clients = make_clients(&cfg.endpoint, concurrency, cfg.per_worker_connections).await?;
     let rpc_deadline = Instant::now() + duration;
-    let rpc_lats: Arc<std::sync::Mutex<Histogram>> = Arc::new(std::sync::Mutex::new(Histogram::default()));
+    let rpc_lats: Arc<std::sync::Mutex<Histogram>> =
+        Arc::new(std::sync::Mutex::new(Histogram::default()));
     let mut handles = Vec::new();
 
     for (wid, client) in rpc_clients.into_iter().enumerate() {
-        let pairs     = pairs.clone();
-        let lats      = rpc_lats.clone();
+        let pairs = pairs.clone();
+        let lats = rpc_lats.clone();
         let edge_type = "TRANSACTS_AT".to_string();
         handles.push(tokio::spawn(async move {
-            let mut rng   = Rng::new(wid as u64 + 0x8888);
+            let mut rng = Rng::new(wid as u64 + 0x8888);
             let mut local = Histogram::default();
             while Instant::now() < rpc_deadline {
-                let si  = rng.next() as usize % pairs.len();
-                let di  = rng.next() as usize % pairs.len();
+                let si = rng.next() as usize % pairs.len();
+                let di = rng.next() as usize % pairs.len();
                 let val = 1.0 + (rng.next() % 999) as f32;
-                let ts  = now_secs().saturating_sub((rng.next() as u32) % 86_400);
-                let t0  = Instant::now();
-                match client.upsert_edge(&edge_type, pairs[si].0.clone(), pairs[di].1.clone(), Some(val), Some(ts), None).await {
-                    Ok(_)  => local.record_ok(t0.elapsed().as_micros() as u64),
+                let ts = now_secs().saturating_sub((rng.next() as u32) % 86_400);
+                let t0 = Instant::now();
+                match client
+                    .upsert_edge(
+                        &edge_type,
+                        pairs[si].0.clone(),
+                        pairs[di].1.clone(),
+                        Some(val),
+                        Some(ts),
+                        None,
+                    )
+                    .await
+                {
+                    Ok(_) => local.record_ok(t0.elapsed().as_micros() as u64),
                     Err(_) => local.record_err(),
                 }
             }
             lats.lock().unwrap().merge(local);
         }));
     }
-    for h in handles { let _ = h.await; }
+    for h in handles {
+        let _ = h.await;
+    }
 
     let mut rpc_guard = rpc_lats.lock().unwrap();
     let rpc_tput = rpc_guard.throughput(duration);
-    let rpc_p99  = rpc_guard.percentile_ms(99.0);
-    let rpc_err  = rpc_guard.error_rate_pct();
+    let rpc_p99 = rpc_guard.percentile_ms(99.0);
+    let rpc_err = rpc_guard.error_rate_pct();
     drop(rpc_guard);
 
     // ── Arm B: IngestStream with reconnection loop ────────────────────────────
     const PIPELINE: usize = 64;
-    println!("  [B] IngestStream (workers={concurrency}, pipeline_depth={PIPELINE}, auto-reconnect)...");
+    println!(
+        "  [B] IngestStream (workers={concurrency}, pipeline_depth={PIPELINE}, auto-reconnect)..."
+    );
 
-    let stream_edges    = Arc::new(AtomicU64::new(0));
-    let stream_txns     = Arc::new(AtomicU64::new(0));
+    let stream_edges = Arc::new(AtomicU64::new(0));
+    let stream_txns = Arc::new(AtomicU64::new(0));
     let stream_reconnects = Arc::new(AtomicU64::new(0));
     let stream_deadline = Instant::now() + duration;
     let mut stream_handles = Vec::new();
 
     for wid in 0..concurrency {
-        let ep          = cfg.endpoint.clone();
-        let se          = stream_edges.clone();
-        let st          = stream_txns.clone();
-        let sr          = stream_reconnects.clone();
+        let ep = cfg.endpoint.clone();
+        let se = stream_edges.clone();
+        let st = stream_txns.clone();
+        let sr = stream_reconnects.clone();
 
         stream_handles.push(tokio::spawn(async move {
             let mut total_seq = 0u64;
-            let mut backoff   = Duration::from_millis(50);
+            let mut backoff = Duration::from_millis(50);
 
             'reconnect: loop {
-                if Instant::now() >= stream_deadline { break; }
+                if Instant::now() >= stream_deadline {
+                    break;
+                }
 
                 let client = match Client::connect(&ep).await {
-                    Ok(c)  => { backoff = Duration::from_millis(50); c }
+                    Ok(c) => {
+                        backoff = Duration::from_millis(50);
+                        c
+                    }
                     Err(_) => {
                         tokio::time::sleep(backoff).await;
                         backoff = (backoff * 2).min(Duration::from_secs(2));
@@ -1148,7 +1470,7 @@ async fn phase8_streaming_vs_rpc(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
                     }
                 };
                 let (tx, resp) = match client.ingest_stream().await {
-                    Ok(p)  => p,
+                    Ok(p) => p,
                     Err(_) => {
                         tokio::time::sleep(backoff).await;
                         backoff = (backoff * 2).min(Duration::from_secs(2));
@@ -1156,50 +1478,66 @@ async fn phase8_streaming_vs_rpc(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
                     }
                 };
 
-                let sem  = Arc::new(tokio::sync::Semaphore::new(PIPELINE));
+                let sem = Arc::new(tokio::sync::Semaphore::new(PIPELINE));
                 let sem2 = sem.clone();
-                let se2  = se.clone();
-                let st2  = st.clone();
+                let se2 = se.clone();
+                let st2 = st.clone();
 
                 let drain = tokio::spawn(async move {
                     let mut responses = resp;
                     while let Some(Ok(r)) = responses.next().await {
                         sem2.add_permits(1);
-                        se2.fetch_add((r.edges_created + r.edges_updated) as u64, Ordering::Relaxed);
+                        se2.fetch_add(
+                            (r.edges_created + r.edges_updated) as u64,
+                            Ordering::Relaxed,
+                        );
                         st2.fetch_add(1, Ordering::Relaxed);
                     }
                 });
 
-                let card_base     = (wid as u64) * 50_000;
+                let card_base = (wid as u64) * 50_000;
                 let merchant_base = (wid as u64) * 100_000;
 
                 let stream_broken = loop {
-                    if Instant::now() >= stream_deadline { break false; }
-                    let permit = match sem.acquire().await { Ok(p) => p, Err(_) => break false };
+                    if Instant::now() >= stream_deadline {
+                        break false;
+                    }
+                    let permit = match sem.acquire().await {
+                        Ok(p) => p,
+                        Err(_) => break false,
+                    };
 
-                    let seq         = total_seq;
-                    let card_id     = card_base + (seq % 10_000);
+                    let seq = total_seq;
+                    let card_id = card_base + (seq % 10_000);
                     let merchant_id = merchant_base + (seq % 50_000);
-                    let tx_id       = format!("p8w{wid}-{seq}");
-                    let val         = 1.0 + (seq % 500) as f32;
-                    let ts          = now_secs().saturating_sub((seq as u32) % 86_400);
+                    let tx_id = format!("p8w{wid}-{seq}");
+                    let val = 1.0 + (seq % 500) as f32;
+                    let ts = now_secs().saturating_sub((seq as u32) % 86_400);
 
                     let mut edge = TransactionEdge::new(
                         "TRANSACTS_AT",
                         TransactionNodeRef::request_node_key("c"),
                         TransactionNodeRef::request_node_key("m"),
-                    ).with_key("e0");
+                    )
+                    .with_key("e0");
                     edge.numeric_value = Some(val);
                     edge.event_ts_secs = Some(ts);
 
-                    if tx.send(
-                        Some(&tx_id),
-                        &[
-                            TransactionNode::new("card",     card_id.to_string()).with_key("c"),
-                            TransactionNode::new("merchant", merchant_id.to_string()).with_key("m"),
-                        ],
-                        &[edge],
-                    ).await.is_err() { break true; }
+                    if tx
+                        .send(
+                            Some(&tx_id),
+                            &[
+                                TransactionNode::new("card", card_id.to_string()).with_key("c"),
+                                TransactionNode::new("merchant", merchant_id.to_string())
+                                    .with_key("m"),
+                            ],
+                            &[edge],
+                        )
+                        .await
+                        .is_err()
+                    {
+                        break true;
+                    }
                     std::mem::forget(permit);
                     total_seq += 1;
                 };
@@ -1216,25 +1554,43 @@ async fn phase8_streaming_vs_rpc(cfg: &Config, pairs: Arc<Vec<(NodeRef, NodeRef)
             }
         }));
     }
-    for h in stream_handles { let _ = h.await; }
+    for h in stream_handles {
+        let _ = h.await;
+    }
 
-    let s_edges      = stream_edges.load(Ordering::Relaxed);
-    let s_tput       = s_edges as f64 / duration.as_secs_f64();
+    let s_edges = stream_edges.load(Ordering::Relaxed);
+    let s_tput = s_edges as f64 / duration.as_secs_f64();
     let s_reconnects = stream_reconnects.load(Ordering::Relaxed);
-    let speedup      = if rpc_tput > 0.0 { s_tput / rpc_tput } else { 0.0 };
+    let speedup = if rpc_tput > 0.0 {
+        s_tput / rpc_tput
+    } else {
+        0.0
+    };
 
     // ── Results ───────────────────────────────────────────────────────────────
     println!();
-    println!("  {:>30}  {:>14}  {:>10}  {:>8}", "write_path", "ops/sec", "p99_ms", "note");
-    println!("  {:>30}  {:>14.0}  {:>10.3}  err={:.2}%",
-        "individual upsert_edge", rpc_tput, rpc_p99, rpc_err);
-    println!("  {:>30}  {:>14.0}  {:>10}  reconnects={}",
-        format!("ingest_stream (pl={PIPELINE})"), s_tput, "pipelined", s_reconnects);
+    println!(
+        "  {:>30}  {:>14}  {:>10}  {:>8}",
+        "write_path", "ops/sec", "p99_ms", "note"
+    );
+    println!(
+        "  {:>30}  {:>14.0}  {:>10.3}  err={:.2}%",
+        "individual upsert_edge", rpc_tput, rpc_p99, rpc_err
+    );
+    println!(
+        "  {:>30}  {:>14.0}  {:>10}  reconnects={}",
+        format!("ingest_stream (pl={PIPELINE})"),
+        s_tput,
+        "pipelined",
+        s_reconnects
+    );
 
     println!();
     println!("  ┌────────────────────────────────────────────────────────────────┐");
-    println!("  │  Streaming advantage: {speedup:.2}×  ({:+.1}% more throughput)          │",
-        (speedup - 1.0) * 100.0);
+    println!(
+        "  │  Streaming advantage: {speedup:.2}×  ({:+.1}% more throughput)          │",
+        (speedup - 1.0) * 100.0
+    );
     println!("  │                                                                │");
     println!("  │  Why: individual RPCs = 1 server semaphore slot / transaction  │");
     println!("  │        streaming     = 1 server semaphore slot / 256 tx batch  │");
@@ -1280,30 +1636,36 @@ async fn phase9_hot_node_promotion(cfg: &Config) -> Result<(), Box<dyn Error>> {
     //  Band A: cards      0 →  4 999  (total in-neighbors   0 →  5 K, Small/Vec)
     //  Band B: cards  5 000 →  9 999  (total in-neighbors  5 K → 10 K, near threshold)
     //  Band C: cards 10 000 → 19 999  (total in-neighbors 10 K → 20 K, Large/BTreeSet)
-    const BAND_A: u64   = 5_000;
-    const BAND_B: u64   = 5_000;
-    const BAND_C: u64   = 10_000;
+    const BAND_A: u64 = 5_000;
+    const BAND_B: u64 = 5_000;
+    const BAND_C: u64 = 10_000;
     const PIPELINE: usize = 128; // in-flight stream messages
 
     // ── Single streaming connection ───────────────────────────────────────────
-    let client = Client::connect(&cfg.endpoint).await
+    let client = Client::connect(&cfg.endpoint)
+        .await
         .map_err(|e| format!("phase9: cannot connect: {e}"))?;
-    let (tx, resp) = client.ingest_stream().await
+    let (tx, resp) = client
+        .ingest_stream()
+        .await
         .map_err(|e| format!("phase9: cannot open ingest_stream: {e}"))?;
 
     // Semaphore: PIPELINE permits. Send-loop acquires one per message and forgets
     // the permit (so it is NOT released on drop). The drain task releases permits
     // as responses arrive, providing natural backpressure.
-    let sem   = Arc::new(tokio::sync::Semaphore::new(PIPELINE));
-    let sem2  = sem.clone();
+    let sem = Arc::new(tokio::sync::Semaphore::new(PIPELINE));
+    let sem2 = sem.clone();
     let edges_done = Arc::new(AtomicU64::new(0));
-    let ed2        = edges_done.clone();
+    let ed2 = edges_done.clone();
 
     let drain = tokio::spawn(async move {
         let mut responses = resp;
         while let Some(Ok(r)) = responses.next().await {
             sem2.add_permits(1);
-            ed2.fetch_add((r.edges_created + r.edges_updated) as u64, Ordering::Relaxed);
+            ed2.fetch_add(
+                (r.edges_created + r.edges_updated) as u64,
+                Ordering::Relaxed,
+            );
         }
     });
 
@@ -1316,41 +1678,54 @@ async fn phase9_hot_node_promotion(cfg: &Config) -> Result<(), Box<dyn Error>> {
     // (wait for every in-flight message to be acknowledged) before timing out.
     // This gives accurate per-band throughput that reflects server processing
     // speed, not just client-side send speed.
-    let bands: [(& str, u64, u64); 3] = [
-        ("A (   0 → 5 K, Small/Vec, pre-promotion)",   0u64,           BAND_A),
-        ("B (5 K → 10 K, Vec,       near threshold)",  BAND_A,         BAND_B),
-        ("C (10 K → 20 K, BTreeSet, post-promotion)",  BAND_A + BAND_B, BAND_C),
+    let bands: [(&str, u64, u64); 3] = [
+        ("A (   0 → 5 K, Small/Vec, pre-promotion)", 0u64, BAND_A),
+        ("B (5 K → 10 K, Vec,       near threshold)", BAND_A, BAND_B),
+        (
+            "C (10 K → 20 K, BTreeSet, post-promotion)",
+            BAND_A + BAND_B,
+            BAND_C,
+        ),
     ];
 
-    println!("  {:<46}  {:>12}  {:>10}  {:>8}",
-        "band", "edges/sec", "edges_ack", "time_s");
+    println!(
+        "  {:<46}  {:>12}  {:>10}  {:>8}",
+        "band", "edges/sec", "edges_ack", "time_s"
+    );
     println!("  {}", "─".repeat(82));
 
     let mut band_results: Vec<f64> = Vec::new();
 
     for (label, card_offset, band_size) in bands {
         let before = edges_done.load(Ordering::Relaxed);
-        let t0     = Instant::now();
+        let t0 = Instant::now();
 
         // Send all edges for this band with backpressure.
         for i in 0..band_size {
-            let Ok(permit) = sem.acquire().await else { break };
+            let Ok(permit) = sem.acquire().await else {
+                break;
+            };
             let card_id = format!("p9_card_{}", card_offset + i);
-            let tx_id   = format!("p9_tx_{}_{}", card_offset, i);
-            if tx.send(
-                Some(&tx_id),
-                &[
-                    TransactionNode::new("card",     card_id).with_key("c"),
-                    TransactionNode::new("merchant", hot_merchant.to_string()).with_key("m"),
-                ],
-                &[
-                    TransactionEdge::new(
+            let tx_id = format!("p9_tx_{}_{}", card_offset, i);
+            if tx
+                .send(
+                    Some(&tx_id),
+                    &[
+                        TransactionNode::new("card", card_id).with_key("c"),
+                        TransactionNode::new("merchant", hot_merchant.to_string()).with_key("m"),
+                    ],
+                    &[TransactionEdge::new(
                         "TRANSACTS_AT",
                         TransactionNodeRef::request_node_key("c"),
                         TransactionNodeRef::request_node_key("m"),
-                    ).with_key("e0"),
-                ],
-            ).await.is_err() { break; }
+                    )
+                    .with_key("e0")],
+                )
+                .await
+                .is_err()
+            {
+                break;
+            }
             // Do NOT drop permit — drain task releases it via add_permits(1).
             std::mem::forget(permit);
         }
@@ -1367,10 +1742,15 @@ async fn phase9_hot_node_promotion(cfg: &Config) -> Result<(), Box<dyn Error>> {
 
         let after = edges_done.load(Ordering::Relaxed);
         let acked = after.saturating_sub(before);
-        let tput  = acked as f64 / elapsed.as_secs_f64();
+        let tput = acked as f64 / elapsed.as_secs_f64();
 
-        println!("  {:<46}  {:>12.0}  {:>10}  {:>8.2}",
-            label, tput, acked, elapsed.as_secs_f64());
+        println!(
+            "  {:<46}  {:>12.0}  {:>10}  {:>8.2}",
+            label,
+            tput,
+            acked,
+            elapsed.as_secs_f64()
+        );
         band_results.push(tput);
     }
 
@@ -1380,7 +1760,7 @@ async fn phase9_hot_node_promotion(cfg: &Config) -> Result<(), Box<dyn Error>> {
     // ── Verdict ───────────────────────────────────────────────────────────────
     let tput_a = band_results[0];
     let tput_c = band_results[2];
-    let ratio  = if tput_a > 0.0 { tput_c / tput_a } else { 0.0 };
+    let ratio = if tput_a > 0.0 { tput_c / tput_a } else { 0.0 };
 
     println!();
     println!("  ┌────────────────────────────────────────────────────────────────────┐");
@@ -1426,11 +1806,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!("\nConnecting to engine...");
-    let client = Client::connect(&cfg.endpoint).await
+    let client = Client::connect(&cfg.endpoint)
+        .await
         .map_err(|e| format!("cannot connect to {}: {e}", cfg.endpoint))?;
 
     let healthy = client.health().check().await?;
-    if !healthy { return Err("engine health check returned NOT_SERVING".into()); }
+    if !healthy {
+        return Err("engine health check returned NOT_SERVING".into());
+    }
     println!("Engine health: SERVING ✓");
 
     ensure_schema(&client, cfg.bootstrap_schema).await?;
@@ -1440,15 +1823,33 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let run_phase = |n: u8| cfg.only_phase.map_or(true, |p| p == n);
 
-    if run_phase(1) { phase1_write_sweep(&cfg,       pairs.clone()).await?; }
-    if run_phase(2) { phase2_read_sweep(&cfg,         pairs.clone()).await?; }
-    if run_phase(3) { phase3_streaming_stress(&cfg).await?; }
-    if run_phase(4) { phase4_mixed_contention(&cfg,   pairs.clone()).await?; }
-    if run_phase(5) { phase5_hot_node(&cfg,           pairs.clone()).await?; }
-    if run_phase(6) { phase6_multi_hop(&cfg,          pairs.clone()).await?; }
-    if run_phase(7) { phase7_failure_boundary(&cfg,   pairs.clone()).await?; }
-    if run_phase(8) { phase8_streaming_vs_rpc(&cfg,   pairs.clone()).await?; }
-    if run_phase(9) { phase9_hot_node_promotion(&cfg).await?; }
+    if run_phase(1) {
+        phase1_write_sweep(&cfg, pairs.clone()).await?;
+    }
+    if run_phase(2) {
+        phase2_read_sweep(&cfg, pairs.clone()).await?;
+    }
+    if run_phase(3) {
+        phase3_streaming_stress(&cfg).await?;
+    }
+    if run_phase(4) {
+        phase4_mixed_contention(&cfg, pairs.clone()).await?;
+    }
+    if run_phase(5) {
+        phase5_hot_node(&cfg, pairs.clone()).await?;
+    }
+    if run_phase(6) {
+        phase6_multi_hop(&cfg, pairs.clone()).await?;
+    }
+    if run_phase(7) {
+        phase7_failure_boundary(&cfg, pairs.clone()).await?;
+    }
+    if run_phase(8) {
+        phase8_streaming_vs_rpc(&cfg, pairs.clone()).await?;
+    }
+    if run_phase(9) {
+        phase9_hot_node_promotion(&cfg).await?;
+    }
 
     print_separator("STRESS TEST COMPLETE");
     println!("\n  Interpretation guide:");

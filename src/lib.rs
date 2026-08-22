@@ -22,6 +22,7 @@
 //!         NodeRef::external("merchant", "merch-01"),
 //!         Some(99.99),
 //!         None,
+//!         None,
 //!     ).await?;
 //!
 //!     // Get edge state with activity windows
@@ -64,6 +65,8 @@
 //!             EdgeTypeWeight::new("USES_IP",       0.2),
 //!         ],
 //!         &[],   // no required types for this example
+//!         &[],   // no boolean property weights
+//!         &[],   // no required boolean properties
 //!         10,    // top-k
 //!         0.1,   // min weighted similarity
 //!         "SIMILAR_TO",
@@ -78,6 +81,7 @@
 //!             EdgeTypeWeight::new("HAS_PRICE_RANGE", 0.5),
 //!         ],
 //!         &["LOCATED_IN"],  // must share at least one location neighbor
+//!         &[], &[],          // no boolean property scoring
 //!         5, 0.1, false, "",
 //!     ).await?;
 //!     for s in &similar.similar_nodes {
@@ -88,34 +92,40 @@
 //! }
 //! ```
 
-pub mod graph;
-pub mod schema;
-pub mod features;
-pub mod health;
-pub mod types;
-pub mod segment;
 mod error;
+pub mod features;
+pub mod graph;
+pub mod health;
+pub mod schema;
+pub mod segment;
+pub mod types;
 
 pub use error::ClientError;
-pub use graph::{GraphClient, IngestSender, IngestResponseStream};
-pub use graph::graph_proto::EdgeEvent;
-pub use schema::{SchemaClient, GetSchemaResult, NodeTypeInfo, EdgeTypeInfo, RemoveEdgeTypeResult, MemoryUsage};
 pub use features::{
-    FeatureClient,
-    SimilarNodeInfo,
-    FindSimilarNodesResult,
-    BuildSimilarityGraphResult,
+    BuildSimilarityGraphResult, FeatureBackfillStatus, FeatureClient, FindSimilarNodesResult,
+    FraudCaseResolution, SimilarNodeInfo, StoredNodeFeatureSlot, StoredNodeFeatureVector,
 };
-pub use types::EdgeTypeWeight;
+pub use graph::graph_proto::EdgeEvent;
+pub use graph::{GraphClient, IngestResponseStream, IngestSender};
 pub use health::HealthClient;
+pub use schema::schema_proto::{
+    EdgeFeatureMetric, FeatureDirection, FeatureFallbackKind, FeatureRetention,
+    FeatureTransformKind, FraudCaseMetric, LogisticModelSpec, NodeFeatureSchemaSpec,
+    NodeFeatureSlotSpec, NodeFeatureSourceKind, ProfileAggregation, ProfileInputSourceKind,
+    ProfileInputSpec, TransactionFeatureProfileSpec,
+};
+pub use schema::{
+    EdgeTypeInfo, GetSchemaResult, MemoryUsage, NodeTypeInfo, RemoveEdgeTypeResult, SchemaClient,
+};
+pub use segment::{segment_name_from_edge, EvalContextData, SegmentClient};
+pub use types::EdgeTypeWeight;
 pub use types::*;
-pub use segment::{SegmentClient, EvalContextData, segment_name_from_edge};
 
 /// Property value type for schema registration. Use with [`SchemaClient::register_property`].
 pub use schema::schema_proto::ValueType;
 
-use tonic::transport::Channel;
 use std::time::Duration;
+use tonic::transport::Channel;
 
 /// Unified client for all JetGraph services.
 ///
@@ -200,7 +210,9 @@ impl Client {
         external_id: Option<&str>,
         properties: &[PropertyEntry],
     ) -> Result<CreateNodeResult, ClientError> {
-        self.graph().create_node(node_type, external_id, properties).await
+        self.graph()
+            .create_node(node_type, external_id, properties)
+            .await
     }
 
     /// Update (merge) properties on an existing node.
@@ -227,7 +239,16 @@ impl Client {
         event_ts_secs: Option<u32>,
         bool_property_value: Option<bool>,
     ) -> Result<UpsertEdgeResult, ClientError> {
-        self.graph().upsert_edge(edge_type, src, dst, numeric_value, event_ts_secs, bool_property_value).await
+        self.graph()
+            .upsert_edge(
+                edge_type,
+                src,
+                dst,
+                numeric_value,
+                event_ts_secs,
+                bool_property_value,
+            )
+            .await
     }
 
     /// Subscribe to the engine's real-time CDC edge-upsert stream.
@@ -246,7 +267,28 @@ impl Client {
         nodes: &[TransactionNode],
         edges: &[TransactionEdge],
     ) -> Result<IngestTransactionResult, ClientError> {
-        self.graph().ingest_transaction(transaction_id, nodes, edges).await
+        self.graph()
+            .ingest_transaction(transaction_id, nodes, edges)
+            .await
+    }
+
+    pub async fn ingest_transaction_scored(
+        &self,
+        transaction_id: Option<&str>,
+        nodes: &[TransactionNode],
+        edges: &[TransactionEdge],
+        scoring_profile: &str,
+        include_scoring_features: bool,
+    ) -> Result<IngestTransactionResult, ClientError> {
+        self.graph()
+            .ingest_transaction_scored(
+                transaction_id,
+                nodes,
+                edges,
+                scoring_profile,
+                include_scoring_features,
+            )
+            .await
     }
 
     /// Open a high-throughput bidirectional streaming ingest session.
@@ -296,8 +338,12 @@ impl Client {
         nodes: &[TransactionNode],
         edges: &[TransactionEdge],
     ) -> Result<(IngestTransactionResult, Vec<u64>), ClientError> {
-        let result = self.graph().ingest_transaction(transaction_id, nodes, edges).await?;
-        let node_ids: Vec<u64> = result.node_results
+        let result = self
+            .graph()
+            .ingest_transaction(transaction_id, nodes, edges)
+            .await?;
+        let node_ids: Vec<u64> = result
+            .node_results
             .iter()
             .filter_map(|n| n.node_id)
             .collect();
@@ -313,7 +359,17 @@ impl Client {
         query_time_secs: Option<u32>,
         activity_windows_secs: Option<&[u64]>,
     ) -> Result<Option<EdgeState>, ClientError> {
-        self.graph().get_edge_state(edge_type, src, dst, None, None, query_time_secs, activity_windows_secs).await
+        self.graph()
+            .get_edge_state(
+                edge_type,
+                src,
+                dst,
+                None,
+                None,
+                query_time_secs,
+                activity_windows_secs,
+            )
+            .await
     }
 
     /// Get neighbors of a node.
@@ -333,9 +389,17 @@ impl Client {
         neighbor_filters: &[NodePropertyFilter],
         include_props: bool,
     ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
-        self.graph().get_neighbors(
-            node, edge_type, out_neighbors, limit, cursor, neighbor_filters, include_props,
-        ).await
+        self.graph()
+            .get_neighbors(
+                node,
+                edge_type,
+                out_neighbors,
+                limit,
+                cursor,
+                neighbor_filters,
+                include_props,
+            )
+            .await
     }
 
     /// Get neighbors of a node, additionally filtering on the connecting edge.
@@ -357,9 +421,18 @@ impl Client {
         include_props: bool,
         edge_filter: Option<&EdgeFilter>,
     ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
-        self.graph().get_neighbors_filtered(
-            node, edge_type, out_neighbors, limit, cursor, neighbor_filters, include_props, edge_filter,
-        ).await
+        self.graph()
+            .get_neighbors_filtered(
+                node,
+                edge_type,
+                out_neighbors,
+                limit,
+                cursor,
+                neighbor_filters,
+                include_props,
+                edge_filter,
+            )
+            .await
     }
 
     // -------------------------------------------------------------------------
@@ -374,13 +447,21 @@ impl Client {
     /// `symmetric`: when true edges are undirected — requires `from_node_type == to_node_type`.
     pub async fn register_static_edge_type(
         &self,
-        name:           &str,
+        name: &str,
         from_node_type: &str,
-        to_node_type:   &str,
+        to_node_type: &str,
         state_ttl_secs: u64,
-        symmetric:      bool,
+        symmetric: bool,
     ) -> Result<u32, ClientError> {
-        self.schema().register_static_edge_type(name, from_node_type, to_node_type, state_ttl_secs, symmetric).await
+        self.schema()
+            .register_static_edge_type(
+                name,
+                from_node_type,
+                to_node_type,
+                state_ttl_secs,
+                symmetric,
+            )
+            .await
     }
 
     /// Find the top-k most similar nodes to `node` using weighted per-type Jaccard.
@@ -403,22 +484,30 @@ impl Client {
     /// (must exist with `minimal_payload=true`).
     pub async fn find_similar_nodes(
         &self,
-        node:                    NodeRef,
-        weighted_edge_types:     &[EdgeTypeWeight],
-        required_edge_types:     &[&str],
-        bool_property_weights:   &[BoolPropertyWeight],
+        node: NodeRef,
+        weighted_edge_types: &[EdgeTypeWeight],
+        required_edge_types: &[&str],
+        bool_property_weights: &[BoolPropertyWeight],
         required_bool_properties: &[&str],
-        k:                       u32,
-        min_similarity:          f32,
-        upsert_edges:            bool,
-        similar_to_edge_type:    &str,
+        k: u32,
+        min_similarity: f32,
+        upsert_edges: bool,
+        similar_to_edge_type: &str,
     ) -> Result<FindSimilarNodesResult, ClientError> {
         let mut features = self.features();
-        features.find_similar_nodes(
-            node, weighted_edge_types, required_edge_types,
-            bool_property_weights, required_bool_properties,
-            k, min_similarity, upsert_edges, similar_to_edge_type,
-        ).await
+        features
+            .find_similar_nodes(
+                node,
+                weighted_edge_types,
+                required_edge_types,
+                bool_property_weights,
+                required_bool_properties,
+                k,
+                min_similarity,
+                upsert_edges,
+                similar_to_edge_type,
+            )
+            .await
     }
 
     /// Batch-build SIMILAR_TO edges for all nodes of `node_type` in parallel.
@@ -437,21 +526,28 @@ impl Client {
     /// for a candidate to be linked. Pass `&[]` for no constraints.
     pub async fn build_similarity_graph(
         &self,
-        node_type:               &str,
-        weighted_edge_types:     &[EdgeTypeWeight],
-        required_edge_types:     &[&str],
-        bool_property_weights:   &[BoolPropertyWeight],
+        node_type: &str,
+        weighted_edge_types: &[EdgeTypeWeight],
+        required_edge_types: &[&str],
+        bool_property_weights: &[BoolPropertyWeight],
         required_bool_properties: &[&str],
-        k:                       u32,
-        min_similarity:          f32,
-        similar_to_edge_type:    &str,
+        k: u32,
+        min_similarity: f32,
+        similar_to_edge_type: &str,
     ) -> Result<BuildSimilarityGraphResult, ClientError> {
         let mut features = self.features();
-        features.build_similarity_graph(
-            node_type, weighted_edge_types, required_edge_types,
-            bool_property_weights, required_bool_properties,
-            k, min_similarity, similar_to_edge_type,
-        ).await
+        features
+            .build_similarity_graph(
+                node_type,
+                weighted_edge_types,
+                required_edge_types,
+                bool_property_weights,
+                required_bool_properties,
+                k,
+                min_similarity,
+                similar_to_edge_type,
+            )
+            .await
     }
 
     /// Delete all stored edges of the given edge type while keeping the type definition intact.

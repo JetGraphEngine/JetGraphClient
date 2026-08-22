@@ -1,8 +1,8 @@
 use std::cmp::max;
 use std::env;
 use std::error::Error;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use jetgraph_client::{Client, NodeRef};
@@ -20,7 +20,9 @@ impl Mode {
             "upsert" => Ok(Self::Upsert),
             "query" => Ok(Self::Query),
             "both" => Ok(Self::Both),
-            other => Err(format!("invalid mode '{other}', expected upsert|query|both")),
+            other => Err(format!(
+                "invalid mode '{other}', expected upsert|query|both"
+            )),
         }
     }
 }
@@ -113,27 +115,33 @@ impl Config {
                 }
                 "--pair-count" => {
                     i += 1;
-                    cfg.pair_count = parse_usize(&value(&args, i, "--pair-count")?, "--pair-count")?;
+                    cfg.pair_count =
+                        parse_usize(&value(&args, i, "--pair-count")?, "--pair-count")?;
                 }
                 "--upsert-requests" => {
                     i += 1;
-                    cfg.upsert_requests = parse_usize(&value(&args, i, "--upsert-requests")?, "--upsert-requests")?;
+                    cfg.upsert_requests =
+                        parse_usize(&value(&args, i, "--upsert-requests")?, "--upsert-requests")?;
                 }
                 "--query-requests" => {
                     i += 1;
-                    cfg.query_requests = parse_usize(&value(&args, i, "--query-requests")?, "--query-requests")?;
+                    cfg.query_requests =
+                        parse_usize(&value(&args, i, "--query-requests")?, "--query-requests")?;
                 }
                 "--warmup-requests" => {
                     i += 1;
-                    cfg.warmup_requests = parse_usize(&value(&args, i, "--warmup-requests")?, "--warmup-requests")?;
+                    cfg.warmup_requests =
+                        parse_usize(&value(&args, i, "--warmup-requests")?, "--warmup-requests")?;
                 }
                 "--concurrency" => {
                     i += 1;
-                    cfg.concurrency = parse_usize(&value(&args, i, "--concurrency")?, "--concurrency")?;
+                    cfg.concurrency =
+                        parse_usize(&value(&args, i, "--concurrency")?, "--concurrency")?;
                 }
                 "--event-span-secs" => {
                     i += 1;
-                    cfg.event_span_secs = parse_u32(&value(&args, i, "--event-span-secs")?, "--event-span-secs")?;
+                    cfg.event_span_secs =
+                        parse_u32(&value(&args, i, "--event-span-secs")?, "--event-span-secs")?;
                 }
                 "--bootstrap-schema" => {
                     cfg.bootstrap_schema = true;
@@ -192,7 +200,10 @@ struct WorkloadData {
 /// otherwise N clones of a single shared channel.
 async fn make_clients(cfg: &Config) -> Result<Vec<Client>, Box<dyn Error>> {
     if cfg.per_worker_connections {
-        println!("Creating {} independent connections (one per worker)...", cfg.concurrency);
+        println!(
+            "Creating {} independent connections (one per worker)...",
+            cfg.concurrency
+        );
         let mut clients = Vec::with_capacity(cfg.concurrency);
         for _ in 0..cfg.concurrency {
             clients.push(Client::connect(&cfg.endpoint).await?);
@@ -292,7 +303,10 @@ fn pair_for(req_idx: usize, cfg: &Config, pairs: &[(NodeRef, NodeRef)]) -> (Node
     (pairs[src_i].0.clone(), pairs[dst_i].1.clone())
 }
 
-async fn prepare_workload_data(client: &Client, cfg: &Config) -> Result<WorkloadData, Box<dyn Error>> {
+async fn prepare_workload_data(
+    client: &Client,
+    cfg: &Config,
+) -> Result<WorkloadData, Box<dyn Error>> {
     ensure_schema(client, cfg).await?;
 
     println!("Ensuring node set exists for {} pairs...", cfg.pair_count);
@@ -331,7 +345,9 @@ async fn prepare_workload_data(client: &Client, cfg: &Config) -> Result<Workload
                 }
             }
             Err(e) => {
-                return Err(format!("failed to ensure nodes; check schema and node types: {e}").into());
+                return Err(
+                    format!("failed to ensure nodes; check schema and node types: {e}").into(),
+                );
             }
         }
     }
@@ -339,7 +355,8 @@ async fn prepare_workload_data(client: &Client, cfg: &Config) -> Result<Workload
 
     let mut pairs = Vec::with_capacity(cfg.pair_count);
     for (idx, ids) in node_ids.into_iter().enumerate() {
-        let (src_id, dst_id) = ids.ok_or_else(|| format!("internal error: missing node ids for pair index {idx}"))?;
+        let (src_id, dst_id) =
+            ids.ok_or_else(|| format!("internal error: missing node ids for pair index {idx}"))?;
         if cfg.use_node_ids {
             pairs.push((NodeRef::node_id(src_id), NodeRef::node_id(dst_id)));
         } else {
@@ -354,9 +371,15 @@ async fn prepare_workload_data(client: &Client, cfg: &Config) -> Result<Workload
 
     println!(
         "Request ref mode: {}",
-        if cfg.use_node_ids { "node_id (fast path)" } else { "external refs" }
+        if cfg.use_node_ids {
+            "node_id (fast path)"
+        } else {
+            "external refs"
+        }
     );
-    Ok(WorkloadData { pairs: Arc::new(pairs) })
+    Ok(WorkloadData {
+        pairs: Arc::new(pairs),
+    })
 }
 
 async fn ensure_schema(client: &Client, cfg: &Config) -> Result<(), Box<dyn Error>> {
@@ -409,7 +432,11 @@ known_node_types={:?}\nknown_edge_types={:?}",
     Ok(())
 }
 
-async fn seed_edges_for_queries(client: &Client, cfg: &Config, data: &WorkloadData) -> Result<(), Box<dyn Error>> {
+async fn seed_edges_for_queries(
+    client: &Client,
+    cfg: &Config,
+    data: &WorkloadData,
+) -> Result<(), Box<dyn Error>> {
     let seed_reqs = cfg.pair_count.min(20_000);
     if seed_reqs == 0 {
         return Ok(());
@@ -422,7 +449,14 @@ async fn seed_edges_for_queries(client: &Client, cfg: &Config, data: &WorkloadDa
         let (src, dst) = pair_for(req_idx, cfg, &data.pairs);
         let ts = now_secs().saturating_sub((req_idx as u32) % cfg.event_span_secs.max(1));
         client
-            .upsert_edge(&cfg.edge_type, src, dst, Some(((req_idx % 100) as f32) + 1.0), Some(ts), None)
+            .upsert_edge(
+                &cfg.edge_type,
+                src,
+                dst,
+                Some(((req_idx % 100) as f32) + 1.0),
+                Some(ts),
+                None,
+            )
             .await
             .map_err(|e| format!("failed to seed edges; check edge type and schema: {e}"))?;
         seeded += 1;
@@ -432,7 +466,11 @@ async fn seed_edges_for_queries(client: &Client, cfg: &Config, data: &WorkloadDa
     Ok(())
 }
 
-async fn warmup_upsert(client: &Client, cfg: &Config, data: &WorkloadData) -> Result<(), Box<dyn Error>> {
+async fn warmup_upsert(
+    client: &Client,
+    cfg: &Config,
+    data: &WorkloadData,
+) -> Result<(), Box<dyn Error>> {
     if cfg.warmup_requests == 0 {
         return Ok(());
     }
@@ -455,7 +493,8 @@ async fn warmup_upsert(client: &Client, cfg: &Config, data: &WorkloadData) -> Re
                 let val = 1.0 + ((rng.next_u64() % 1000) as f32 / 10.0);
                 let offset = (rng.next_u64() as u32) % cfg.event_span_secs.max(1);
                 let ts = now_secs().saturating_sub(offset);
-                c.upsert_edge(&cfg.edge_type, src, dst, Some(val), Some(ts), None).await?;
+                c.upsert_edge(&cfg.edge_type, src, dst, Some(val), Some(ts), None)
+                    .await?;
             }
             Ok::<(), jetgraph_client::ClientError>(())
         }));
@@ -467,7 +506,11 @@ async fn warmup_upsert(client: &Client, cfg: &Config, data: &WorkloadData) -> Re
     Ok(())
 }
 
-async fn warmup_query(client: &Client, cfg: &Config, data: &WorkloadData) -> Result<(), Box<dyn Error>> {
+async fn warmup_query(
+    client: &Client,
+    cfg: &Config,
+    data: &WorkloadData,
+) -> Result<(), Box<dyn Error>> {
     if cfg.warmup_requests == 0 {
         return Ok(());
     }
@@ -486,7 +529,8 @@ async fn warmup_query(client: &Client, cfg: &Config, data: &WorkloadData) -> Res
                     break;
                 }
                 let (src, dst) = pair_for(req_idx, &cfg, &pairs);
-                c.get_edge_state(&cfg.edge_type, src, dst, None, None).await?;
+                c.get_edge_state(&cfg.edge_type, src, dst, None, None)
+                    .await?;
             }
             Ok::<(), jetgraph_client::ClientError>(())
         }));
@@ -498,7 +542,11 @@ async fn warmup_query(client: &Client, cfg: &Config, data: &WorkloadData) -> Res
     Ok(())
 }
 
-async fn run_upsert_load(clients: Vec<Client>, cfg: Config, data: WorkloadData) -> Result<RunSummary, Box<dyn Error>> {
+async fn run_upsert_load(
+    clients: Vec<Client>,
+    cfg: Config,
+    data: WorkloadData,
+) -> Result<RunSummary, Box<dyn Error>> {
     println!(
         "Running upsert load: requests={} concurrency={}...",
         cfg.upsert_requests, cfg.concurrency
@@ -525,7 +573,10 @@ async fn run_upsert_load(clients: Vec<Client>, cfg: Config, data: WorkloadData) 
                 let offset = (rng.next_u64() as u32) % cfg.event_span_secs.max(1);
                 let ts = now_secs().saturating_sub(offset);
                 let t0 = Instant::now();
-                match c.upsert_edge(&cfg.edge_type, src, dst, Some(val), Some(ts), None).await {
+                match c
+                    .upsert_edge(&cfg.edge_type, src, dst, Some(val), Some(ts), None)
+                    .await
+                {
                     Ok(_) => {
                         stats.ok_count += 1;
                     }
@@ -533,9 +584,7 @@ async fn run_upsert_load(clients: Vec<Client>, cfg: Config, data: WorkloadData) 
                         stats.err_count += 1;
                     }
                 }
-                stats
-                    .latencies_micros
-                    .push(t0.elapsed().as_micros() as u64);
+                stats.latencies_micros.push(t0.elapsed().as_micros() as u64);
             }
             stats
         }));
@@ -560,7 +609,11 @@ async fn run_upsert_load(clients: Vec<Client>, cfg: Config, data: WorkloadData) 
     })
 }
 
-async fn run_query_load(clients: Vec<Client>, cfg: Config, data: WorkloadData) -> Result<RunSummary, Box<dyn Error>> {
+async fn run_query_load(
+    clients: Vec<Client>,
+    cfg: Config,
+    data: WorkloadData,
+) -> Result<RunSummary, Box<dyn Error>> {
     println!(
         "Running query load: requests={} concurrency={}...",
         cfg.query_requests, cfg.concurrency
@@ -594,9 +647,7 @@ async fn run_query_load(clients: Vec<Client>, cfg: Config, data: WorkloadData) -
                         stats.err_count += 1;
                     }
                 }
-                stats
-                    .latencies_micros
-                    .push(t0.elapsed().as_micros() as u64);
+                stats.latencies_micros.push(t0.elapsed().as_micros() as u64);
             }
             stats
         }));
@@ -641,10 +692,22 @@ fn print_summary(summary: &RunSummary) {
     println!("elapsed_seconds  : {:.3}", elapsed_s);
     println!("throughput_ops_s : {:.2}", throughput);
     println!("lat_avg_ms       : {:.3}", avg / 1000.0);
-    println!("lat_p50_ms       : {:.3}", percentile(&latencies, 50.0) / 1000.0);
-    println!("lat_p95_ms       : {:.3}", percentile(&latencies, 95.0) / 1000.0);
-    println!("lat_p99_ms       : {:.3}", percentile(&latencies, 99.0) / 1000.0);
-    println!("lat_max_ms       : {:.3}", latencies.last().copied().unwrap_or(0) as f64 / 1000.0);
+    println!(
+        "lat_p50_ms       : {:.3}",
+        percentile(&latencies, 50.0) / 1000.0
+    );
+    println!(
+        "lat_p95_ms       : {:.3}",
+        percentile(&latencies, 95.0) / 1000.0
+    );
+    println!(
+        "lat_p99_ms       : {:.3}",
+        percentile(&latencies, 99.0) / 1000.0
+    );
+    println!(
+        "lat_max_ms       : {:.3}",
+        latencies.last().copied().unwrap_or(0) as f64 / 1000.0
+    );
 }
 
 fn enforce_sub_ms_if_requested(cfg: &Config, summary: &RunSummary) -> Result<(), Box<dyn Error>> {

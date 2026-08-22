@@ -1,22 +1,19 @@
 //! Graph service client: nodes, edges, neighbors.
 
+use crate::{
+    ClientError, CreateNodeResult, EdgeFilter, EdgeIngestOutcome, EdgeState,
+    IngestTransactionResult, NeighborEdge, NodeIngestOutcome, NodePropPredicate,
+    NodePropertyFilter, NodeRef, PropertyEntry, PropertyValue, ScoredFeatureValue, TransactionEdge,
+    TransactionNode, TransactionNodeRef, UpsertEdgeResult,
+};
 use tonic::transport::Channel;
 use tonic::Streaming;
-use crate::{
-    ClientError, NodeRef, PropertyEntry, PropertyValue, UpsertEdgeResult, EdgeState, NeighborEdge,
-    CreateNodeResult, EdgeFilter, NodePropertyFilter, NodePropPredicate,
-    TransactionNode, TransactionNodeRef, TransactionEdge,
-    IngestTransactionResult, NodeIngestOutcome, EdgeIngestOutcome,
-};
 
 pub(crate) mod graph_proto {
     tonic::include_proto!("graph");
 }
 
-use graph_proto::{
-    graph_service_client::GraphServiceClient,
-    node_ref::Identifier,
-};
+use graph_proto::{graph_service_client::GraphServiceClient, node_ref::Identifier};
 
 /// Decode 16 bytes (8 × little-endian u16) from the proto `bins` field into `[u16; 8]`.
 /// Gracefully returns all-zeros if the server sent fewer bytes (e.g. a slim/non-numeric edge).
@@ -25,8 +22,8 @@ fn decode_bins(bytes: &[u8]) -> [u16; 8] {
     for (i, chunk) in bytes.chunks(2).enumerate().take(8) {
         out[i] = match chunk {
             [lo, hi] => u16::from_le_bytes([*lo, *hi]),
-            [lo]     => *lo as u16,
-            _        => 0,
+            [lo] => *lo as u16,
+            _ => 0,
         };
     }
     out
@@ -51,7 +48,10 @@ impl GraphClient {
             NodeRef::NodeId(id) => graph_proto::NodeRef {
                 identifier: Some(Identifier::NodeId(*id)),
             },
-            NodeRef::External { node_type, external_id } => graph_proto::NodeRef {
+            NodeRef::External {
+                node_type,
+                external_id,
+            } => graph_proto::NodeRef {
                 identifier: Some(Identifier::External(graph_proto::ExternalRef {
                     node_type_name: node_type.clone(),
                     external_id: external_id.clone(),
@@ -62,11 +62,21 @@ impl GraphClient {
 
     pub(crate) fn property_to_proto(p: &PropertyEntry) -> graph_proto::PropertyEntry {
         let value = match &p.value {
-            PropertyValue::Int(v) => graph_proto::PropertyValue { value: Some(graph_proto::property_value::Value::IntVal(*v)) },
-            PropertyValue::Float(v) => graph_proto::PropertyValue { value: Some(graph_proto::property_value::Value::FloatVal(*v)) },
-            PropertyValue::String(v) => graph_proto::PropertyValue { value: Some(graph_proto::property_value::Value::StringVal(v.clone())) },
-            PropertyValue::Bool(v) => graph_proto::PropertyValue { value: Some(graph_proto::property_value::Value::BoolVal(*v)) },
-            PropertyValue::Timestamp(v) => graph_proto::PropertyValue { value: Some(graph_proto::property_value::Value::TimestampVal(*v)) },
+            PropertyValue::Int(v) => graph_proto::PropertyValue {
+                value: Some(graph_proto::property_value::Value::IntVal(*v)),
+            },
+            PropertyValue::Float(v) => graph_proto::PropertyValue {
+                value: Some(graph_proto::property_value::Value::FloatVal(*v)),
+            },
+            PropertyValue::String(v) => graph_proto::PropertyValue {
+                value: Some(graph_proto::property_value::Value::StringVal(v.clone())),
+            },
+            PropertyValue::Bool(v) => graph_proto::PropertyValue {
+                value: Some(graph_proto::property_value::Value::BoolVal(*v)),
+            },
+            PropertyValue::Timestamp(v) => graph_proto::PropertyValue {
+                value: Some(graph_proto::property_value::Value::TimestampVal(*v)),
+            },
         };
         graph_proto::PropertyEntry {
             name: p.name.clone(),
@@ -74,15 +84,15 @@ impl GraphClient {
         }
     }
 
-    pub(crate) fn transaction_node_ref_to_proto(r: &TransactionNodeRef) -> graph_proto::TransactionNodeRef {
+    pub(crate) fn transaction_node_ref_to_proto(
+        r: &TransactionNodeRef,
+    ) -> graph_proto::TransactionNodeRef {
         use graph_proto::transaction_node_ref::Reference;
         let reference = match r {
             TransactionNodeRef::Node(node_ref) => {
                 Reference::Node(Self::node_ref_to_proto(node_ref))
             }
-            TransactionNodeRef::RequestNodeKey(key) => {
-                Reference::RequestNodeKey(key.clone())
-            }
+            TransactionNodeRef::RequestNodeKey(key) => Reference::RequestNodeKey(key.clone()),
         };
         graph_proto::TransactionNodeRef {
             reference: Some(reference),
@@ -102,7 +112,12 @@ impl GraphClient {
             external_id: external_id.map(String::from),
             properties: properties.iter().map(Self::property_to_proto).collect(),
         };
-        let r = self.client.clone().create_node(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clone()
+            .create_node(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok(CreateNodeResult {
             node_id: inner.node_id,
@@ -124,7 +139,11 @@ impl GraphClient {
             node: Some(Self::node_ref_to_proto(&node)),
             props: properties.iter().map(Self::property_to_proto).collect(),
         };
-        self.client.clone().update_node(req).await.map_err(ClientError::from)?;
+        self.client
+            .clone()
+            .update_node(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(())
     }
 
@@ -136,7 +155,11 @@ impl GraphClient {
         let req = graph_proto::DeleteNodeRequest {
             node: Some(Self::node_ref_to_proto(&node)),
         };
-        self.client.clone().delete_node(req).await.map_err(ClientError::from)?;
+        self.client
+            .clone()
+            .delete_node(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(())
     }
 
@@ -161,9 +184,16 @@ impl GraphClient {
             event_ts_secs,
             bool_property_value,
         };
-        let r = self.client.clone().upsert_edge(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clone()
+            .upsert_edge(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
-        let payload = inner.payload.ok_or_else(|| ClientError::Internal("missing payload".into()))?;
+        let payload = inner
+            .payload
+            .ok_or_else(|| ClientError::Internal("missing payload".into()))?;
         let bins = decode_bins(&payload.bins);
         Ok(UpsertEdgeResult {
             created_new: inner.created_new,
@@ -183,6 +213,36 @@ impl GraphClient {
         nodes: &[TransactionNode],
         edges: &[TransactionEdge],
     ) -> Result<IngestTransactionResult, ClientError> {
+        self.ingest_transaction_with_profile(transaction_id, nodes, edges, None, false)
+            .await
+    }
+
+    pub async fn ingest_transaction_scored(
+        &self,
+        transaction_id: Option<&str>,
+        nodes: &[TransactionNode],
+        edges: &[TransactionEdge],
+        scoring_profile: &str,
+        include_scoring_features: bool,
+    ) -> Result<IngestTransactionResult, ClientError> {
+        self.ingest_transaction_with_profile(
+            transaction_id,
+            nodes,
+            edges,
+            Some(scoring_profile),
+            include_scoring_features,
+        )
+        .await
+    }
+
+    async fn ingest_transaction_with_profile(
+        &self,
+        transaction_id: Option<&str>,
+        nodes: &[TransactionNode],
+        edges: &[TransactionEdge],
+        scoring_profile: Option<&str>,
+        include_scoring_features: bool,
+    ) -> Result<IngestTransactionResult, ClientError> {
         let req = graph_proto::IngestTransactionRequest {
             transaction_id: transaction_id.unwrap_or("").to_string(),
             nodes: nodes
@@ -194,6 +254,8 @@ impl GraphClient {
                     properties: n.properties.iter().map(Self::property_to_proto).collect(),
                 })
                 .collect(),
+            scoring_profile: scoring_profile.unwrap_or_default().to_string(),
+            include_scoring_features,
             edges: edges
                 .iter()
                 .map(|e| graph_proto::TransactionEdge {
@@ -208,45 +270,71 @@ impl GraphClient {
                 .collect(),
         };
 
-        let r = self.client.clone().ingest_transaction(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clone()
+            .ingest_transaction(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
 
-        let node_results = inner.node_results.into_iter().map(|n| NodeIngestOutcome {
-            index: n.index,
-            request_node_key: if n.request_node_key.is_empty() { None } else { Some(n.request_node_key) },
-            node_id: if n.error.is_some() { None } else { Some(n.node_id) },
-            created: n.created,
-            error: n.error,
-        }).collect();
+        let node_results = inner
+            .node_results
+            .into_iter()
+            .map(|n| NodeIngestOutcome {
+                index: n.index,
+                request_node_key: if n.request_node_key.is_empty() {
+                    None
+                } else {
+                    Some(n.request_node_key)
+                },
+                node_id: if n.error.is_some() {
+                    None
+                } else {
+                    Some(n.node_id)
+                },
+                created: n.created,
+                error: n.error,
+            })
+            .collect();
 
-        let edge_results = inner.edge_results.into_iter().map(|e| {
-            let graph_proto::EdgeIngestResult {
-                index,
-                request_edge_key,
-                created_new,
-                payload,
-                error,
-            } = e;
-            let payload = payload.map(|p| {
-                let bins = decode_bins(&p.bins);
-                UpsertEdgeResult {
+        let edge_results = inner
+            .edge_results
+            .into_iter()
+            .map(|e| {
+                let graph_proto::EdgeIngestResult {
+                    index,
+                    request_edge_key,
                     created_new,
-                    tx_count: p.tx_count,
-                    approx_sum: p.approx_sum,
-                    last_seen: p.last_seen,
-                    activity_bitmap: p.flags,
-                    bins,
-                    bool_flag: p.bool_flag,
+                    payload,
+                    error,
+                    warning: _,
+                } = e;
+                let payload = payload.map(|p| {
+                    let bins = decode_bins(&p.bins);
+                    UpsertEdgeResult {
+                        created_new,
+                        tx_count: p.tx_count,
+                        approx_sum: p.approx_sum,
+                        last_seen: p.last_seen,
+                        activity_bitmap: p.flags,
+                        bins,
+                        bool_flag: p.bool_flag,
+                    }
+                });
+                EdgeIngestOutcome {
+                    index,
+                    request_edge_key: if request_edge_key.is_empty() {
+                        None
+                    } else {
+                        Some(request_edge_key)
+                    },
+                    created_new,
+                    payload,
+                    error,
                 }
-            });
-            EdgeIngestOutcome {
-                index,
-                request_edge_key: if request_edge_key.is_empty() { None } else { Some(request_edge_key) },
-                created_new,
-                payload,
-                error,
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(IngestTransactionResult {
             transaction_id: inner.transaction_id,
@@ -258,6 +346,21 @@ impl GraphClient {
             edge_errors: inner.edge_errors,
             node_results,
             edge_results,
+            fraud_score: inner.fraud_score,
+            score_confidence: inner.score_confidence,
+            score_status: inner.score_status,
+            fraud_decision: inner.fraud_decision,
+            scoring_profile_version: inner.scoring_profile_version,
+            fraud_model_version: inner.fraud_model_version,
+            cold_start: inner.cold_start,
+            scoring_features: inner
+                .scoring_features
+                .into_iter()
+                .map(|feature| ScoredFeatureValue {
+                    name: feature.name,
+                    value: feature.value,
+                })
+                .collect(),
         })
     }
 
@@ -277,7 +380,9 @@ impl GraphClient {
     pub async fn ingest_stream(&self) -> Result<(IngestSender, IngestResponseStream), ClientError> {
         let (tx, rx) = tokio::sync::mpsc::channel::<graph_proto::IngestTransactionRequest>(1024);
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-        let resp = self.client.clone()
+        let resp = self
+            .client
+            .clone()
             .ingest_stream(stream)
             .await
             .map_err(ClientError::from)?
@@ -303,14 +408,23 @@ impl GraphClient {
             min_value,
             max_value,
             query_time_secs,
-            activity_windows_secs: activity_windows_secs.map(|s| s.to_vec()).unwrap_or_default(),
+            activity_windows_secs: activity_windows_secs
+                .map(|s| s.to_vec())
+                .unwrap_or_default(),
         };
-        let r = self.client.clone().get_edge_state(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clone()
+            .get_edge_state(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         if !inner.found {
             return Ok(None);
         }
-        let payload = inner.payload.ok_or_else(|| ClientError::Internal("missing payload".into()))?;
+        let payload = inner
+            .payload
+            .ok_or_else(|| ClientError::Internal("missing payload".into()))?;
         let bins = decode_bins(&payload.bins);
         Ok(Some(EdgeState {
             found: true,
@@ -345,7 +459,14 @@ impl GraphClient {
         include_props: bool,
     ) -> Result<(Vec<NeighborEdge>, bool), ClientError> {
         self.get_neighbors_filtered(
-            node, edge_type, out_neighbors, limit, cursor, neighbor_filters, include_props, None,
+            node,
+            edge_type,
+            out_neighbors,
+            limit,
+            cursor,
+            neighbor_filters,
+            include_props,
+            None,
         )
         .await
     }
@@ -378,27 +499,50 @@ impl GraphClient {
             neighbor_filters: proto_filters,
             include_neighbor_props: include_props,
         };
-        let r = self.client.clone().get_neighbors(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clone()
+            .get_neighbors(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
-        let edges: Vec<NeighborEdge> = inner.edges
+        let edges: Vec<NeighborEdge> = inner
+            .edges
             .into_iter()
             .map(|e| {
-                let neighbor_props = e.neighbor_props.into_iter().map(|p| {
-                    let value = match p.value.and_then(|v| v.value) {
-                        Some(graph_proto::property_value::Value::IntVal(x))       => PropertyValue::Int(x),
-                        Some(graph_proto::property_value::Value::FloatVal(x))     => PropertyValue::Float(x),
-                        Some(graph_proto::property_value::Value::StringVal(x))    => PropertyValue::String(x),
-                        Some(graph_proto::property_value::Value::BoolVal(x))      => PropertyValue::Bool(x),
-                        Some(graph_proto::property_value::Value::TimestampVal(x)) => PropertyValue::Timestamp(x),
-                        _ => PropertyValue::Int(0),
-                    };
-                    PropertyEntry { name: p.name, value }
-                }).collect();
+                let neighbor_props = e
+                    .neighbor_props
+                    .into_iter()
+                    .map(|p| {
+                        let value = match p.value.and_then(|v| v.value) {
+                            Some(graph_proto::property_value::Value::IntVal(x)) => {
+                                PropertyValue::Int(x)
+                            }
+                            Some(graph_proto::property_value::Value::FloatVal(x)) => {
+                                PropertyValue::Float(x)
+                            }
+                            Some(graph_proto::property_value::Value::StringVal(x)) => {
+                                PropertyValue::String(x)
+                            }
+                            Some(graph_proto::property_value::Value::BoolVal(x)) => {
+                                PropertyValue::Bool(x)
+                            }
+                            Some(graph_proto::property_value::Value::TimestampVal(x)) => {
+                                PropertyValue::Timestamp(x)
+                            }
+                            _ => PropertyValue::Int(0),
+                        };
+                        PropertyEntry {
+                            name: p.name,
+                            value,
+                        }
+                    })
+                    .collect();
                 NeighborEdge {
-                    neighbor_node_id:     e.neighbor_node_id,
-                    edge_id:              e.edge_id,
-                    created_at_us:        e.created_at_us,
-                    neighbor_node_type:   e.neighbor_node_type,
+                    neighbor_node_id: e.neighbor_node_id,
+                    edge_id: e.edge_id,
+                    created_at_us: e.created_at_us,
+                    neighbor_node_type: e.neighbor_node_type,
                     neighbor_external_id: e.neighbor_external_id,
                     neighbor_props,
                 }
@@ -410,15 +554,15 @@ impl GraphClient {
     fn filter_to_proto(f: &NodePropertyFilter) -> graph_proto::PropertyPredicate {
         use graph_proto::property_predicate::Predicate;
         let predicate = Some(match &f.predicate {
-            NodePropPredicate::IntGt(v)    => Predicate::IntGt(*v),
-            NodePropPredicate::IntLt(v)    => Predicate::IntLt(*v),
-            NodePropPredicate::IntEq(v)    => Predicate::IntEq(*v),
-            NodePropPredicate::FloatGt(v)  => Predicate::FloatGt(*v),
-            NodePropPredicate::FloatLt(v)  => Predicate::FloatLt(*v),
-            NodePropPredicate::TsAfter(v)  => Predicate::TsAfter(*v),
+            NodePropPredicate::IntGt(v) => Predicate::IntGt(*v),
+            NodePropPredicate::IntLt(v) => Predicate::IntLt(*v),
+            NodePropPredicate::IntEq(v) => Predicate::IntEq(*v),
+            NodePropPredicate::FloatGt(v) => Predicate::FloatGt(*v),
+            NodePropPredicate::FloatLt(v) => Predicate::FloatLt(*v),
+            NodePropPredicate::TsAfter(v) => Predicate::TsAfter(*v),
             NodePropPredicate::TsBefore(v) => Predicate::TsBefore(*v),
             NodePropPredicate::StringEq(v) => Predicate::StringEq(v.clone()),
-            NodePropPredicate::BoolEq(v)   => Predicate::BoolEq(*v),
+            NodePropPredicate::BoolEq(v) => Predicate::BoolEq(*v),
         });
         graph_proto::PropertyPredicate {
             property_name: f.property.clone(),
@@ -430,7 +574,11 @@ impl GraphClient {
         graph_proto::EdgeFilter {
             min_created_at_us: f.min_created_at_us,
             max_created_at_us: f.max_created_at_us,
-            property_filters: f.property_filters.iter().map(Self::filter_to_proto).collect(),
+            property_filters: f
+                .property_filters
+                .iter()
+                .map(Self::filter_to_proto)
+                .collect(),
         }
     }
 
@@ -444,7 +592,12 @@ impl GraphClient {
             node: Some(Self::node_ref_to_proto(&node)),
             edge_type: edge_type.to_string(),
         };
-        let r = self.client.clone().get_neighbor_count(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clone()
+            .get_neighbor_count(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok((inner.count, inner.approximate))
     }
@@ -461,7 +614,12 @@ impl GraphClient {
             edge_type: edge_type.to_string(),
             exclude_neighbor: exclude_neighbor.map(|n| Self::node_ref_to_proto(&n)),
         };
-        let r = self.client.clone().get_last_neighbor(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clone()
+            .get_last_neighbor(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         if !inner.found {
             return Ok(None);
@@ -474,23 +632,45 @@ impl GraphClient {
         let req = graph_proto::GetNodeRequest {
             node: Some(Self::node_ref_to_proto(&node)),
         };
-        let r = self.client.clone().get_node(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clone()
+            .get_node(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok(NodeResponse {
             node_id: inner.node_id,
             node_type: inner.node_type,
             external_id: inner.external_id,
-            properties: inner.properties.into_iter().map(|p| {
-                let value = match p.value.and_then(|v| v.value) {
-                    Some(graph_proto::property_value::Value::IntVal(x)) => PropertyValue::Int(x),
-                    Some(graph_proto::property_value::Value::FloatVal(x)) => PropertyValue::Float(x),
-                    Some(graph_proto::property_value::Value::StringVal(x)) => PropertyValue::String(x),
-                    Some(graph_proto::property_value::Value::BoolVal(x)) => PropertyValue::Bool(x),
-                    Some(graph_proto::property_value::Value::TimestampVal(x)) => PropertyValue::Timestamp(x),
-                    _ => PropertyValue::Int(0),
-                };
-                PropertyEntry { name: p.name, value }
-            }).collect(),
+            properties: inner
+                .properties
+                .into_iter()
+                .map(|p| {
+                    let value = match p.value.and_then(|v| v.value) {
+                        Some(graph_proto::property_value::Value::IntVal(x)) => {
+                            PropertyValue::Int(x)
+                        }
+                        Some(graph_proto::property_value::Value::FloatVal(x)) => {
+                            PropertyValue::Float(x)
+                        }
+                        Some(graph_proto::property_value::Value::StringVal(x)) => {
+                            PropertyValue::String(x)
+                        }
+                        Some(graph_proto::property_value::Value::BoolVal(x)) => {
+                            PropertyValue::Bool(x)
+                        }
+                        Some(graph_proto::property_value::Value::TimestampVal(x)) => {
+                            PropertyValue::Timestamp(x)
+                        }
+                        _ => PropertyValue::Int(0),
+                    };
+                    PropertyEntry {
+                        name: p.name,
+                        value,
+                    }
+                })
+                .collect(),
         })
     }
 
@@ -506,13 +686,22 @@ impl GraphClient {
             external_id_filter: external_id_filter.to_string(),
             limit,
         };
-        let r = self.client.clone().list_nodes(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clone()
+            .list_nodes(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
-        let nodes = inner.nodes.into_iter().map(|n| NodeSummary {
-            node_id: n.node_id,
-            node_type: n.node_type,
-            external_id: n.external_id,
-        }).collect();
+        let nodes = inner
+            .nodes
+            .into_iter()
+            .map(|n| NodeSummary {
+                node_id: n.node_id,
+                node_type: n.node_type,
+                external_id: n.external_id,
+            })
+            .collect();
         Ok((nodes, inner.total_count))
     }
 
@@ -524,7 +713,9 @@ impl GraphClient {
         watch_edge_types: Vec<String>,
     ) -> Result<Streaming<graph_proto::EdgeEvent>, ClientError> {
         let req = graph_proto::EdgeEventRequest { watch_edge_types };
-        let stream = self.client.clone()
+        let stream = self
+            .client
+            .clone()
             .watch_edge_upserts(req)
             .await
             .map_err(ClientError::from)?;
@@ -558,7 +749,26 @@ impl IngestSender {
         edges: &[TransactionEdge],
     ) -> Result<(), ClientError> {
         let req = build_ingest_proto(transaction_id, nodes, edges);
-        self.tx.send(req).await
+        self.tx
+            .send(req)
+            .await
+            .map_err(|_| ClientError::Internal("ingest stream closed".into()))
+    }
+
+    pub async fn send_scored(
+        &self,
+        transaction_id: Option<&str>,
+        nodes: &[TransactionNode],
+        edges: &[TransactionEdge],
+        scoring_profile: &str,
+        include_scoring_features: bool,
+    ) -> Result<(), ClientError> {
+        let mut req = build_ingest_proto(transaction_id, nodes, edges);
+        req.scoring_profile = scoring_profile.to_string();
+        req.include_scoring_features = include_scoring_features;
+        self.tx
+            .send(req)
+            .await
             .map_err(|_| ClientError::Internal("ingest stream closed".into()))
     }
 
@@ -585,18 +795,33 @@ impl IngestResponseStream {
     pub async fn next(&mut self) -> Option<Result<IngestTransactionResult, ClientError>> {
         match self.inner.message().await {
             Ok(Some(r)) => Some(Ok(IngestTransactionResult {
-                transaction_id:  r.transaction_id,
-                nodes_created:   r.nodes_created,
-                nodes_existing:  r.nodes_existing,
-                node_errors:     r.node_errors,
-                edges_created:   r.edges_created,
-                edges_updated:   r.edges_updated,
-                edge_errors:     r.edge_errors,
-                node_results:    vec![],
-                edge_results:    vec![],
+                transaction_id: r.transaction_id,
+                nodes_created: r.nodes_created,
+                nodes_existing: r.nodes_existing,
+                node_errors: r.node_errors,
+                edges_created: r.edges_created,
+                edges_updated: r.edges_updated,
+                edge_errors: r.edge_errors,
+                node_results: vec![],
+                edge_results: vec![],
+                fraud_score: r.fraud_score,
+                score_confidence: r.score_confidence,
+                score_status: r.score_status,
+                fraud_decision: r.fraud_decision,
+                scoring_profile_version: r.scoring_profile_version,
+                fraud_model_version: r.fraud_model_version,
+                cold_start: r.cold_start,
+                scoring_features: r
+                    .scoring_features
+                    .into_iter()
+                    .map(|feature| ScoredFeatureValue {
+                        name: feature.name,
+                        value: feature.value,
+                    })
+                    .collect(),
             })),
-            Ok(None)   => None,
-            Err(e)     => Some(Err(ClientError::from(e))),
+            Ok(None) => None,
+            Err(e) => Some(Err(ClientError::from(e))),
         }
     }
 }
@@ -609,21 +834,33 @@ fn build_ingest_proto(
 ) -> graph_proto::IngestTransactionRequest {
     graph_proto::IngestTransactionRequest {
         transaction_id: transaction_id.unwrap_or("").to_string(),
-        nodes: nodes.iter().map(|n| graph_proto::TransactionNode {
-            request_node_key: n.request_node_key.clone().unwrap_or_default(),
-            node_type_name:   n.node_type.clone(),
-            external_id:      n.external_id.clone(),
-            properties:       n.properties.iter().map(GraphClient::property_to_proto).collect(),
-        }).collect(),
-        edges: edges.iter().map(|e| graph_proto::TransactionEdge {
-            request_edge_key:    e.request_edge_key.clone().unwrap_or_default(),
-            edge_type_name:      e.edge_type.clone(),
-            src:                 Some(GraphClient::transaction_node_ref_to_proto(&e.src)),
-            dst:                 Some(GraphClient::transaction_node_ref_to_proto(&e.dst)),
-            numeric_value:       e.numeric_value,
-            event_ts_secs:       e.event_ts_secs,
-            bool_property_value: e.bool_property_value,
-        }).collect(),
+        nodes: nodes
+            .iter()
+            .map(|n| graph_proto::TransactionNode {
+                request_node_key: n.request_node_key.clone().unwrap_or_default(),
+                node_type_name: n.node_type.clone(),
+                external_id: n.external_id.clone(),
+                properties: n
+                    .properties
+                    .iter()
+                    .map(GraphClient::property_to_proto)
+                    .collect(),
+            })
+            .collect(),
+        edges: edges
+            .iter()
+            .map(|e| graph_proto::TransactionEdge {
+                request_edge_key: e.request_edge_key.clone().unwrap_or_default(),
+                edge_type_name: e.edge_type.clone(),
+                src: Some(GraphClient::transaction_node_ref_to_proto(&e.src)),
+                dst: Some(GraphClient::transaction_node_ref_to_proto(&e.dst)),
+                numeric_value: e.numeric_value,
+                event_ts_secs: e.event_ts_secs,
+                bool_property_value: e.bool_property_value,
+            })
+            .collect(),
+        scoring_profile: String::new(),
+        include_scoring_features: false,
     }
 }
 

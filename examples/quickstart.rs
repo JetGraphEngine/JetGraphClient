@@ -52,7 +52,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::Semaphore;
 
-use jetgraph_client::{Client, NodeRef, NodePropertyFilter, PropertyEntry, PropertyValue, ValueType};
+use jetgraph_client::{
+    Client, NodePropertyFilter, NodeRef, PropertyEntry, PropertyValue, ValueType,
+};
 
 /// Max concurrent in-flight gRPC calls during bulk data load.
 const CONCURRENCY: usize = 64;
@@ -407,16 +409,16 @@ async fn create_nodes(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     // Geographic clusters for realistic lat/lon generation
     // (US domestic, UK, Europe, APAC, LatAm)
     let geo_clusters: &[(f64, f64, &str)] = &[
-        (40.71, -74.00, "US"), // New York
+        (40.71, -74.00, "US"),  // New York
         (34.05, -118.24, "US"), // Los Angeles
-        (41.88, -87.63, "US"), // Chicago
-        (29.76, -95.37, "US"), // Houston
+        (41.88, -87.63, "US"),  // Chicago
+        (29.76, -95.37, "US"),  // Houston
         (33.45, -112.07, "US"), // Phoenix
-        (51.51, -0.13, "GB"),  // London
-        (50.11, 8.68, "DE"),   // Frankfurt
-        (48.86, 2.35, "FR"),   // Paris
-        (35.69, 139.69, "JP"), // Tokyo
-        (1.35, 103.82, "SG"),  // Singapore
+        (51.51, -0.13, "GB"),   // London
+        (50.11, 8.68, "DE"),    // Frankfurt
+        (48.86, 2.35, "FR"),    // Paris
+        (35.69, 139.69, "JP"),  // Tokyo
+        (1.35, 103.82, "SG"),   // Singapore
         (-23.55, -46.63, "BR"), // São Paulo
     ];
 
@@ -424,7 +426,14 @@ async fn create_nodes(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     // Realistic card networks and issuer countries
     let networks = ["VISA", "MASTERCARD", "AMEX", "DISCOVER"];
     let issuer_countries = ["US", "US", "US", "GB", "DE", "CA", "AU", "FR", "JP", "SG"];
-    let card_levels = ["CLASSIC", "CLASSIC", "GOLD", "PLATINUM", "WORLD", "SIGNATURE"];
+    let card_levels = [
+        "CLASSIC",
+        "CLASSIC",
+        "GOLD",
+        "PLATINUM",
+        "WORLD",
+        "SIGNATURE",
+    ];
 
     let bins: Vec<_> = (1u32..=500)
         .map(|i| {
@@ -446,25 +455,24 @@ async fn create_nodes(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     // Mix of domestic and international merchants, with realistic MCCs.
     // High-risk MCCs: gambling (7995), crypto (6051), wire (4829), adult (5967)
     let merchant_configs: &[(i64, &str, &str)] = &[
-        (5411, "Supermarket", "LOW"),   // Grocery
-        (5812, "Restaurant", "LOW"),    // Dining
-        (5912, "Pharmacy", "LOW"),      // Drug store
-        (5999, "Retail Store", "LOW"),  // General retail
-        (5732, "Electronics", "LOW"),   // Electronics
-        (4121, "Taxi / Rideshare", "LOW"), // Transport
-        (5944, "Jewelry Store", "MEDIUM"), // Jewelry
-        (5045, "Computer Parts", "MEDIUM"), // IT wholesale
-        (7011, "Hotel", "MEDIUM"),      // Lodging
-        (4722, "Travel Agency", "MEDIUM"), // Travel
-        (7995, "Gambling Platform", "HIGH"),  // HIGH RISK
-        (6051, "Crypto Exchange", "HIGH"),    // HIGH RISK
-        (4829, "Wire Transfer", "HIGH"),      // HIGH RISK
-        (5967, "Adult Content", "HIGH"),      // HIGH RISK
+        (5411, "Supermarket", "LOW"),        // Grocery
+        (5812, "Restaurant", "LOW"),         // Dining
+        (5912, "Pharmacy", "LOW"),           // Drug store
+        (5999, "Retail Store", "LOW"),       // General retail
+        (5732, "Electronics", "LOW"),        // Electronics
+        (4121, "Taxi / Rideshare", "LOW"),   // Transport
+        (5944, "Jewelry Store", "MEDIUM"),   // Jewelry
+        (5045, "Computer Parts", "MEDIUM"),  // IT wholesale
+        (7011, "Hotel", "MEDIUM"),           // Lodging
+        (4722, "Travel Agency", "MEDIUM"),   // Travel
+        (7995, "Gambling Platform", "HIGH"), // HIGH RISK
+        (6051, "Crypto Exchange", "HIGH"),   // HIGH RISK
+        (4829, "Wire Transfer", "HIGH"),     // HIGH RISK
+        (5967, "Adult Content", "HIGH"),     // HIGH RISK
     ];
 
     let merchant_countries = [
-        "US", "US", "US", "US", "US", "US", "US",
-        "GB", "GB", "DE", "FR", "SG", "NL", "CY",
+        "US", "US", "US", "US", "US", "US", "US", "GB", "GB", "DE", "FR", "SG", "NL", "CY",
     ];
 
     let merchants: Vec<_> = (1u32..=14_500)
@@ -494,12 +502,10 @@ async fn create_nodes(client: &Client) -> Result<(), Box<dyn std::error::Error>>
 
     // ── Customers (10,000) ──────────────────────────────────────────────────
     let cust_countries = [
-        "US", "US", "US", "US", "US", "US", "US",
-        "CA", "GB", "DE", "AU", "MX",
+        "US", "US", "US", "US", "US", "US", "US", "CA", "GB", "DE", "AU", "MX",
     ];
     let risk_tiers = [
-        "LOW", "LOW", "LOW", "LOW", "LOW", "LOW", "LOW",
-        "MEDIUM", "MEDIUM", "HIGH",
+        "LOW", "LOW", "LOW", "LOW", "LOW", "LOW", "LOW", "MEDIUM", "MEDIUM", "HIGH",
     ];
 
     let customers: Vec<_> = (1u32..=10_000)
@@ -531,14 +537,16 @@ async fn create_nodes(client: &Client) -> Result<(), Box<dyn std::error::Error>>
             } else {
                 0.0
             };
-            let open_date =
-                days_ago(rng.u32_in(30, 3_650)) as i64;
+            let open_date = days_ago(rng.u32_in(30, 3_650)) as i64;
             (
                 format!("account-{i:05}"),
                 vec![
                     PropertyEntry::string("account_type", acct_type),
                     PropertyEntry::float("credit_limit", credit_limit),
-                    PropertyEntry { name: "open_date_ts".into(), value: PropertyValue::Timestamp(open_date) },
+                    PropertyEntry {
+                        name: "open_date_ts".into(),
+                        value: PropertyValue::Timestamp(open_date),
+                    },
                 ],
             )
         })
@@ -575,7 +583,9 @@ async fn create_nodes(client: &Client) -> Result<(), Box<dyn std::error::Error>>
 
     // ── Devices (15,000) ────────────────────────────────────────────────────
     let device_types = ["MOBILE", "MOBILE", "MOBILE", "BROWSER", "TABLET"];
-    let os_options = ["iOS", "iOS", "Android", "Android", "Windows", "macOS", "Linux"];
+    let os_options = [
+        "iOS", "iOS", "Android", "Android", "Windows", "macOS", "Linux",
+    ];
 
     let devices: Vec<_> = (1u32..=15_000)
         .map(|i| {
@@ -671,9 +681,9 @@ async fn create_nodes(client: &Client) -> Result<(), Box<dyn std::error::Error>>
 
     // Fraud scenario cards
     for (ext_id, limit, is_virtual) in &[
-        ("card-tester-001", 500.0_f64, true),   // card-testing fraud
-        ("card-ato-001", 15_000.0_f64, false),  // account takeover victim
-        ("card-itv-001", 8_000.0_f64, false),   // impossible travel victim
+        ("card-tester-001", 500.0_f64, true),  // card-testing fraud
+        ("card-ato-001", 15_000.0_f64, false), // account takeover victim
+        ("card-itv-001", 8_000.0_f64, false),  // impossible travel victim
     ] {
         client
             .create_node(
@@ -698,7 +708,10 @@ async fn create_nodes(client: &Client) -> Result<(), Box<dyn std::error::Error>>
                 &[
                     PropertyEntry::string("account_type", "CHECKING"),
                     PropertyEntry::float("credit_limit", 0.0),
-                    PropertyEntry { name: "open_date_ts".into(), value: PropertyValue::Timestamp(days_ago(90) as i64) },
+                    PropertyEntry {
+                        name: "open_date_ts".into(),
+                        value: PropertyValue::Timestamp(days_ago(90) as i64),
+                    },
                 ],
             )
             .await?;
@@ -734,7 +747,11 @@ async fn create_static_edges(client: &Client) -> Result<(), Box<dyn std::error::
     let owns_account: Vec<_> = (1u32..=15_000)
         .map(|acct_i| {
             // Map each account to a customer; last 5,000 accounts share customers 1–5,000
-            let cust_i = if acct_i <= 10_000 { acct_i } else { acct_i - 10_000 };
+            let cust_i = if acct_i <= 10_000 {
+                acct_i
+            } else {
+                acct_i - 10_000
+            };
             (
                 NodeRef::external("customer", &format!("customer-{cust_i:05}")),
                 NodeRef::external("account", &format!("account-{acct_i:05}")),
@@ -750,7 +767,11 @@ async fn create_static_edges(client: &Client) -> Result<(), Box<dyn std::error::
     // ~20,000 cards, 1–2 per account
     let has_card: Vec<_> = (1u32..=20_000)
         .map(|card_i| {
-            let acct_i = if card_i <= 15_000 { card_i } else { card_i - 15_000 };
+            let acct_i = if card_i <= 15_000 {
+                card_i
+            } else {
+                card_i - 15_000
+            };
             (
                 NodeRef::external("account", &format!("account-{acct_i:05}")),
                 NodeRef::external("card", &format!("card-{card_i:05}")),
@@ -789,15 +810,15 @@ async fn create_transaction_edges(client: &Client) -> Result<(), Box<dyn std::er
     // ── TRANSACTS_AT: Card → Merchant ───────────────────────────────────────
     // 15,000 active cards, each with 2–4 merchant relationships.
     // ~30,000 edges total; amounts vary by merchant risk tier.
-    let mut tx_edges: Vec<(NodeRef, NodeRef, Option<f32>, Option<u32>)> = Vec::with_capacity(30_000);
+    let mut tx_edges: Vec<(NodeRef, NodeRef, Option<f32>, Option<u32>)> =
+        Vec::with_capacity(30_000);
 
     for card_i in 1u32..=15_000 {
         let mut rng = Rng::new(card_i as u64 + 100_000);
         let num_merchants = rng.u32_in(2, 5); // 2–4 unique merchants per card
         for _ in 0..num_merchants {
             let merch_i = rng.u32_in(1, 14_501);
-            let merchant_ref =
-                NodeRef::external("merchant", &format!("merchant-{merch_i:05}"));
+            let merchant_ref = NodeRef::external("merchant", &format!("merchant-{merch_i:05}"));
             let card_ref = NodeRef::external("card", &format!("card-{card_i:05}"));
 
             let is_high_risk = merch_i % 14 >= 10; // ~29% of merchants are high-risk MCCs
@@ -922,11 +943,11 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
 
         // ── Normal history (past 30 days): low-value domestic purchases
         let normal_merchants = [
-            ("merchant-00001", 42.50_f32),  // grocery
-            ("merchant-00002", 18.75_f32),  // coffee / dining
-            ("merchant-00003", 67.00_f32),  // pharmacy
-            ("merchant-00004", 89.50_f32),  // gas station
-            ("merchant-00005", 31.20_f32),  // retail
+            ("merchant-00001", 42.50_f32), // grocery
+            ("merchant-00002", 18.75_f32), // coffee / dining
+            ("merchant-00003", 67.00_f32), // pharmacy
+            ("merchant-00004", 89.50_f32), // gas station
+            ("merchant-00005", 31.20_f32), // retail
         ];
         let mut normal_edges = Vec::new();
         for (days_back, (merch, amount)) in
@@ -989,13 +1010,13 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
 
         let ato_purchases = [
             ("merchant-crypto-001", 1_850.00_f32),
-            ("merchant-09001",      2_400.00_f32),
-            ("merchant-09002",      3_200.00_f32),
-            ("merchant-09003",      1_100.00_f32),
-            ("merchant-09004",        950.00_f32),
-            ("merchant-09005",      2_750.00_f32),
-            ("merchant-09006",      1_450.00_f32),
-            ("merchant-09007",        800.00_f32),
+            ("merchant-09001", 2_400.00_f32),
+            ("merchant-09002", 3_200.00_f32),
+            ("merchant-09003", 1_100.00_f32),
+            ("merchant-09004", 950.00_f32),
+            ("merchant-09005", 2_750.00_f32),
+            ("merchant-09006", 1_450.00_f32),
+            ("merchant-09007", 800.00_f32),
         ];
         let mut ato_edges = Vec::new();
         for (i, (merch, amount)) in ato_purchases.iter().enumerate() {
@@ -1098,7 +1119,9 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
             )
             .await?;
 
-        println!("    ip-ny-001 (New York) at T-8min + ip-uk-001 (London) at T+0 → 5,570 km in 8 min");
+        println!(
+            "    ip-ny-001 (New York) at T-8min + ip-uk-001 (London) at T+0 → 5,570 km in 8 min"
+        );
     }
 
     // ── Scenario 5: Money Mule Chain ─────────────────────────────────────────
@@ -1146,17 +1169,22 @@ async fn inject_fraud_scenarios(client: &Client) -> Result<(), Box<dyn std::erro
                 ],
                 0.91,
                 "Money mule chain — funds received from compromised cards and cashed out via crypto exchange",
+                Some("rule_mule_chain_3hop"),
             )
             .await?;
-        client.features().create_fraud_case(
-            "case-device-farm-001",
-            &[
-                NodeRef::external("device", "device-farm-001"),
-                NodeRef::external("merchant", "merchant-crypto-001"),
-            ],
-            0.97,
-            "Device farm — rooted Android shared by 500+ unrelated cards, mass card compromise",
-        ).await?;
+        client
+            .features()
+            .create_fraud_case(
+                "case-device-farm-001",
+                &[
+                    NodeRef::external("device", "device-farm-001"),
+                    NodeRef::external("merchant", "merchant-crypto-001"),
+                ],
+                0.97,
+                "Device farm — rooted Android shared by 500+ unrelated cards, mass card compromise",
+                Some("rule_device_fanout"),
+            )
+            .await?;
 
         println!("    3-hop mule chain created + fraud cases linked to 5 context nodes");
     }
@@ -1256,15 +1284,18 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
             .get_neighbors(
                 NodeRef::NodeId(first_merchant.neighbor_node_id),
                 "TRANSACTS_AT",
-                false,   // in-neighbors = cards that purchased from this merchant
-                50,      // page size
-                0,       // cursor: start
+                false, // in-neighbors = cards that purchased from this merchant
+                50,    // page size
+                0,     // cursor: start
                 &filters,
-                true,    // include neighbour (card) properties in response
+                true, // include neighbour (card) properties in response
             )
             .await?;
-        println!("    Cards with limit > 1000 purchasing from merchant {} ({} found):",
-            first_merchant.neighbor_node_id, filtered.len());
+        println!(
+            "    Cards with limit > 1000 purchasing from merchant {} ({} found):",
+            first_merchant.neighbor_node_id,
+            filtered.len()
+        );
         for n in &filtered {
             print!("      card={}", n.neighbor_node_id);
             if let Some(ext) = &n.neighbor_external_id {
@@ -1290,19 +1321,14 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     for card_id in &["card-tester-001", "card-ato-001", "card-00100"] {
         let (count, approx) = client
             .graph()
-            .get_neighbor_count(
-                NodeRef::external("card", card_id),
-                "TRANSACTS_AT",
-            )
+            .get_neighbor_count(NodeRef::external("card", card_id), "TRANSACTS_AT")
             .await?;
         let label = match *card_id {
             "card-tester-001" => "⚠ VELOCITY ALERT (card-testing)",
-            "card-ato-001"    => "⚠ ATO spike — 8 new merchants in 3h",
-            _                 => "✓ Normal card",
+            "card-ato-001" => "⚠ ATO spike — 8 new merchants in 3h",
+            _ => "✓ Normal card",
         };
-        println!(
-            "    {card_id}: {count} unique merchants (approx={approx}) → {label}"
-        );
+        println!("    {card_id}: {count} unique merchants (approx={approx}) → {label}");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1328,9 +1354,7 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     if let Some((prev_node_id, prev_ts)) = prev {
         let gap_secs = now_secs().saturating_sub(prev_ts);
         let gap_mins = gap_secs / 60;
-        println!(
-            "    Previous IP node_id={prev_node_id} last_seen={gap_mins} min ago"
-        );
+        println!("    Previous IP node_id={prev_node_id} last_seen={gap_mins} min ago");
 
         // Retrieve geo for the previous IP
         let prev_node = client
@@ -1394,8 +1418,14 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         hist.total_events, hist.window_covered_secs
     );
     let bin_labels = [
-        "<$5", "$5–$25", "$25–$50", "$50–$100",
-        "$100–$250", "$250–$500", "$500–$1k", "≥$1k",
+        "<$5",
+        "$5–$25",
+        "$25–$50",
+        "$50–$100",
+        "$100–$250",
+        "$250–$500",
+        "$500–$1k",
+        "≥$1k",
     ];
     print!("    Amount bins: ");
     for (label, count) in bin_labels.iter().zip(hist.total_counts.iter()) {
@@ -1453,7 +1483,9 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
         fv.direct_fraud_score, fv.fraudulent_neighbor_count, fv.max_neighbor_fraud_score);
 
     if fv.fraudulent_neighbor_count > 0 || fv.max_neighbor_fraud_score > 0.5 {
-        println!("    ⚠ FRAUD SIGNAL: transaction parties include flagged nodes — DECLINE RECOMMENDED");
+        println!(
+            "    ⚠ FRAUD SIGNAL: transaction parties include flagged nodes — DECLINE RECOMMENDED"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1481,7 +1513,10 @@ async fn demo_queries(client: &Client) -> Result<(), Box<dyn std::error::Error>>
     if ctx.flagged_nodes.is_empty() {
         println!("    ✓ No flagged nodes — proceed normally");
     } else {
-        println!("    ⚠ FRAUD HITS ({} flagged nodes):", ctx.flagged_nodes.len());
+        println!(
+            "    ⚠ FRAUD HITS ({} flagged nodes):",
+            ctx.flagged_nodes.len()
+        );
         for n in &ctx.flagged_nodes {
             for case in &n.cases {
                 println!(

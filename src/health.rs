@@ -1,7 +1,7 @@
 //! Health check client.
 
-use tonic::transport::Channel;
 use crate::ClientError;
+use tonic::transport::Channel;
 
 pub(crate) mod health_proto {
     tonic::include_proto!("health");
@@ -23,7 +23,8 @@ impl HealthClient {
 
     /// Check engine readiness.
     pub async fn check(&mut self) -> Result<bool, ClientError> {
-        let r = self.client
+        let r = self
+            .client
             .check(health_proto::HealthRequest {})
             .await
             .map_err(ClientError::from)?;

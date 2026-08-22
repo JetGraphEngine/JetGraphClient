@@ -49,22 +49,22 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use jetgraph_client::{
+    BoolPropertyWeight,
+
     // Core client
     Client,
+
+    // Similarity & segment helpers
+    EdgeTypeWeight,
+    NodePropertyFilter,
 
     // Node / edge reference types
     NodeRef,
     PropertyEntry,
-    NodePropertyFilter,
-
+    TransactionEdge,
     // Transaction ingest types
     TransactionNode,
-    TransactionEdge,
     TransactionNodeRef,
-
-    // Similarity & segment helpers
-    EdgeTypeWeight,
-    BoolPropertyWeight,
 
     // Schema enum
     ValueType,
@@ -82,9 +82,15 @@ fn now_secs() -> u32 {
         .as_secs() as u32
 }
 
-fn secs_ago(s: u32) -> u32 { now_secs().saturating_sub(s) }
-fn hours_ago(h: u32) -> u32 { secs_ago(h * 3_600) }
-fn days_ago(d: u32)  -> u32 { secs_ago(d * 86_400) }
+fn secs_ago(s: u32) -> u32 {
+    now_secs().saturating_sub(s)
+}
+fn hours_ago(h: u32) -> u32 {
+    secs_ago(h * 3_600)
+}
+fn days_ago(d: u32) -> u32 {
+    secs_ago(d * 86_400)
+}
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -140,10 +146,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // WARNING: the kind is frozen at registration. Changing it after data is written
     // corrupts NodeIds and requires a full data migration.
 
-    schema.register_node_type("card",     false).await?;
+    schema.register_node_type("card", false).await?;
     schema.register_node_type("merchant", false).await?;
-    schema.register_node_type("device",   false).await?;
-    schema.register_node_type("ip",       false).await?;
+    schema.register_node_type("device", false).await?;
+    schema.register_node_type("ip", false).await?;
     println!("  Node types registered: card, merchant, device, ip");
 
     // --- Compact edge type: TRANSACTS_AT (card → merchant) -------------------
@@ -171,17 +177,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //                       to (min(src,dst), max(src,dst)). Only valid when
     //                       from_node_type == to_node_type.
 
-    schema.register_compact_edge_type(
-        "TRANSACTS_AT",
-        "card",
-        "merchant",
-        90 * 86_400,                                        // 90-day TTL
-        vec![5.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0], // 7 thresholds → 8 bins
-        "amount_usd",
-        3_600,                                              // 1-hour activity ticks
-        Some("is_international"),                           // bool property on bit 63
-        false,                                              // directed
-    ).await?;
+    schema
+        .register_compact_edge_type(
+            "TRANSACTS_AT",
+            "card",
+            "merchant",
+            90 * 86_400,                                         // 90-day TTL
+            vec![5.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0], // 7 thresholds → 8 bins
+            "amount_usd",
+            3_600,                    // 1-hour activity ticks
+            Some("is_international"), // bool property on bit 63
+            false,                    // directed
+        )
+        .await?;
 
     // --- Compact edge type: USES_DEVICE (card → device) ----------------------
     //
@@ -189,17 +197,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5-minute ticks let us detect multiple logins from different devices
     // within a short window (card-sharing / device-farm signals).
 
-    schema.register_compact_edge_type(
-        "USES_DEVICE",
-        "card",
-        "device",
-        30 * 86_400,    // 30-day TTL
-        vec![],         // no amount bins
-        "",
-        300,            // 5-minute activity ticks
-        None,           // no bool property
-        false,
-    ).await?;
+    schema
+        .register_compact_edge_type(
+            "USES_DEVICE",
+            "card",
+            "device",
+            30 * 86_400, // 30-day TTL
+            vec![],      // no amount bins
+            "",
+            300,  // 5-minute activity ticks
+            None, // no bool property
+            false,
+        )
+        .await?;
 
     // --- Static edge type: SIMILAR_TO (card → card) --------------------------
     //
@@ -211,13 +221,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use for computed/derived relationships where only the latest value matters.
     // `symmetric = true` because similarity is undirected.
 
-    schema.register_static_edge_type(
-        "SIMILAR_TO",
-        "card",
-        "card",
-        86_400,     // 24-hour TTL — recomputed daily
-        true,       // symmetric (undirected)
-    ).await?;
+    schema
+        .register_static_edge_type(
+            "SIMILAR_TO",
+            "card",
+            "card",
+            86_400, // 24-hour TTL — recomputed daily
+            true,   // symmetric (undirected)
+        )
+        .await?;
     println!("  Edge types registered: TRANSACTS_AT, USES_DEVICE, SIMILAR_TO");
 
     // --- Node properties -----------------------------------------------------
@@ -228,12 +240,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // Supported types: Int (i64), Float (f64), String, Bool, Timestamp (i64 unix secs).
 
-    schema.register_property("card_type",    "card",     true, ValueType::String).await?;
-    schema.register_property("credit_limit", "card",     true, ValueType::Float).await?;
-    schema.register_property("is_virtual",   "card",     true, ValueType::Bool).await?;
-    schema.register_property("name",         "merchant", true, ValueType::String).await?;
-    schema.register_property("mcc",          "merchant", true, ValueType::Int).await?;
-    schema.register_property("country",      "merchant", true, ValueType::String).await?;
+    schema
+        .register_property("card_type", "card", true, ValueType::String)
+        .await?;
+    schema
+        .register_property("credit_limit", "card", true, ValueType::Float)
+        .await?;
+    schema
+        .register_property("is_virtual", "card", true, ValueType::Bool)
+        .await?;
+    schema
+        .register_property("name", "merchant", true, ValueType::String)
+        .await?;
+    schema
+        .register_property("mcc", "merchant", true, ValueType::Int)
+        .await?;
+    schema
+        .register_property("country", "merchant", true, ValueType::String)
+        .await?;
     println!("  Properties registered");
 
     // --- Finalize ------------------------------------------------------------
@@ -250,12 +274,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // or verifying that all expected types are registered.
 
     let s = schema.get_schema().await?;
-    println!("  Schema v{}: {} node types, {} edge types",
-        s.schema_version, s.node_types.len(), s.edge_types.len());
+    println!(
+        "  Schema v{}: {} node types, {} edge types",
+        s.schema_version,
+        s.node_types.len(),
+        s.edge_types.len()
+    );
     for et in &s.edge_types {
-        println!("    edge '{}': {} → {} | ttl={}s | tick={}s | symmetric={}",
-            et.name, et.from_node_type, et.to_node_type,
-            et.state_ttl_secs, et.tick_size_secs, et.is_symmetric);
+        println!(
+            "    edge '{}': {} → {} | ttl={}s | tick={}s | symmetric={}",
+            et.name,
+            et.from_node_type,
+            et.to_node_type,
+            et.state_ttl_secs,
+            et.tick_size_secs,
+            et.is_symmetric
+        );
     }
 
     // =========================================================================
@@ -271,47 +305,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Create a single node with properties --------------------------------
 
-    let card_result = client.create_node(
-        "card",
-        Some("card-demo-001"),
-        &[
-            PropertyEntry::string("card_type",    "CREDIT"),
-            PropertyEntry::float("credit_limit",  5_000.0),
-            PropertyEntry::bool("is_virtual",     false),
-        ],
-    ).await?;
-    println!("  card-demo-001 → node_id={} created={}",
-        card_result.node_id, card_result.created);
+    let card_result = client
+        .create_node(
+            "card",
+            Some("card-demo-001"),
+            &[
+                PropertyEntry::string("card_type", "CREDIT"),
+                PropertyEntry::float("credit_limit", 5_000.0),
+                PropertyEntry::bool("is_virtual", false),
+            ],
+        )
+        .await?;
+    println!(
+        "  card-demo-001 → node_id={} created={}",
+        card_result.node_id, card_result.created
+    );
 
     // Create the merchant we'll transact at throughout these examples.
-    let merchant_result = client.create_node(
-        "merchant",
-        Some("merchant-demo-001"),
-        &[
-            PropertyEntry::string("name",    "Demo Coffee Shop"),
-            PropertyEntry::int("mcc",        5812),         // restaurant MCC
-            PropertyEntry::string("country", "US"),
-        ],
-    ).await?;
-    println!("  merchant-demo-001 → node_id={} created={}",
-        merchant_result.node_id, merchant_result.created);
+    let merchant_result = client
+        .create_node(
+            "merchant",
+            Some("merchant-demo-001"),
+            &[
+                PropertyEntry::string("name", "Demo Coffee Shop"),
+                PropertyEntry::int("mcc", 5812), // restaurant MCC
+                PropertyEntry::string("country", "US"),
+            ],
+        )
+        .await?;
+    println!(
+        "  merchant-demo-001 → node_id={} created={}",
+        merchant_result.node_id, merchant_result.created
+    );
 
     // Create some devices and IPs for later examples.
-    client.create_node("device", Some("device-demo-001"), &[]).await?;
-    client.create_node("device", Some("device-demo-002"), &[]).await?;
-    client.create_node("ip",     Some("ip-us-001"),       &[]).await?;
-    client.create_node("ip",     Some("ip-uk-001"),       &[]).await?;
+    client
+        .create_node("device", Some("device-demo-001"), &[])
+        .await?;
+    client
+        .create_node("device", Some("device-demo-002"), &[])
+        .await?;
+    client.create_node("ip", Some("ip-us-001"), &[]).await?;
+    client.create_node("ip", Some("ip-uk-001"), &[]).await?;
     println!("  Created device-demo-001/002, ip-us-001, ip-uk-001");
 
     // --- Read a node back ----------------------------------------------------
     //
     // `get_node` returns node_id, node_type, external_id, and all properties.
 
-    let node = client.graph().get_node(
-        NodeRef::external("card", "card-demo-001")
-    ).await?;
-    println!("  get_node: id={} type={} ext={:?}",
-        node.node_id, node.node_type, node.external_id);
+    let node = client
+        .graph()
+        .get_node(NodeRef::external("card", "card-demo-001"))
+        .await?;
+    println!(
+        "  get_node: id={} type={} ext={:?}",
+        node.node_id, node.node_type, node.external_id
+    );
     for prop in &node.properties {
         println!("    prop '{}' = {:?}", prop.name, prop.value);
     }
@@ -325,14 +374,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // If you already have the node_id from a previous call, prefer NodeRef::node_id.
 
-    let _same_node_by_id = client.graph().get_node(
-        NodeRef::node_id(card_result.node_id)
-    ).await?;
+    let _same_node_by_id = client
+        .graph()
+        .get_node(NodeRef::node_id(card_result.node_id))
+        .await?;
 
     // --- List nodes ----------------------------------------------------------
 
     let (nodes, total) = client.graph().list_nodes("card", "", 10).await?;
-    println!("  list_nodes(card): found {} (total {})", nodes.len(), total);
+    println!(
+        "  list_nodes(card): found {} (total {})",
+        nodes.len(),
+        total
+    );
 
     // =========================================================================
     // SECTION 4 — Single Edge Upsert
@@ -352,41 +406,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== 4. Single Edge Upsert ===");
 
     // First transaction: domestic purchase 3 days ago.
-    let r = client.upsert_edge(
-        "TRANSACTS_AT",
-        NodeRef::external("card",     "card-demo-001"),
-        NodeRef::external("merchant", "merchant-demo-001"),
-        Some(42.50),                // amount → goes into the $25-$50 bin
-        Some(days_ago(3)),          // historical timestamp (3 days ago)
-        Some(false),                // is_international = false
-    ).await?;
-    println!("  upsert #1: created_new={} tx_count={} approx_sum={:.2}",
-        r.created_new, r.tx_count, r.approx_sum);
+    let r = client
+        .upsert_edge(
+            "TRANSACTS_AT",
+            NodeRef::external("card", "card-demo-001"),
+            NodeRef::external("merchant", "merchant-demo-001"),
+            Some(42.50),       // amount → goes into the $25-$50 bin
+            Some(days_ago(3)), // historical timestamp (3 days ago)
+            Some(false),       // is_international = false
+        )
+        .await?;
+    println!(
+        "  upsert #1: created_new={} tx_count={} approx_sum={:.2}",
+        r.created_new, r.tx_count, r.approx_sum
+    );
     println!("  bins: {:?}", r.bins);
 
     // Second transaction: larger domestic purchase today.
-    let r = client.upsert_edge(
-        "TRANSACTS_AT",
-        NodeRef::external("card",     "card-demo-001"),
-        NodeRef::external("merchant", "merchant-demo-001"),
-        Some(120.00),               // amount → goes into the $100-$250 bin
-        Some(hours_ago(2)),
-        Some(false),
-    ).await?;
-    println!("  upsert #2: created_new={} tx_count={} approx_sum={:.2}",
-        r.created_new, r.tx_count, r.approx_sum);
+    let r = client
+        .upsert_edge(
+            "TRANSACTS_AT",
+            NodeRef::external("card", "card-demo-001"),
+            NodeRef::external("merchant", "merchant-demo-001"),
+            Some(120.00), // amount → goes into the $100-$250 bin
+            Some(hours_ago(2)),
+            Some(false),
+        )
+        .await?;
+    println!(
+        "  upsert #2: created_new={} tx_count={} approx_sum={:.2}",
+        r.created_new, r.tx_count, r.approx_sum
+    );
 
     // Third transaction: international purchase today (bool_flag = true).
-    let r = client.upsert_edge(
-        "TRANSACTS_AT",
-        NodeRef::external("card",     "card-demo-001"),
-        NodeRef::external("merchant", "merchant-demo-001"),
-        Some(890.00),               // amount → goes into the $500-$1k bin
-        Some(now_secs()),
-        Some(true),                 // is_international = true
-    ).await?;
-    println!("  upsert #3: tx_count={} approx_sum={:.2} bool_flag={:?}",
-        r.tx_count, r.approx_sum, r.bool_flag);
+    let r = client
+        .upsert_edge(
+            "TRANSACTS_AT",
+            NodeRef::external("card", "card-demo-001"),
+            NodeRef::external("merchant", "merchant-demo-001"),
+            Some(890.00), // amount → goes into the $500-$1k bin
+            Some(now_secs()),
+            Some(true), // is_international = true
+        )
+        .await?;
+    println!(
+        "  upsert #3: tx_count={} approx_sum={:.2} bool_flag={:?}",
+        r.tx_count, r.approx_sum, r.bool_flag
+    );
 
     // =========================================================================
     // SECTION 5 — Read Edge State
@@ -407,17 +473,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== 5. Read Edge State ===");
 
-    let state = client.get_edge_state(
-        "TRANSACTS_AT",
-        NodeRef::external("card",     "card-demo-001"),
-        NodeRef::external("merchant", "merchant-demo-001"),
-        None,                       // no specific query_time
-        Some(&[3_600, 86_400]),     // how many activity ticks in the last 1h / 24h?
-    ).await?;
+    let state = client
+        .get_edge_state(
+            "TRANSACTS_AT",
+            NodeRef::external("card", "card-demo-001"),
+            NodeRef::external("merchant", "merchant-demo-001"),
+            None,                   // no specific query_time
+            Some(&[3_600, 86_400]), // how many activity ticks in the last 1h / 24h?
+        )
+        .await?;
 
     if let Some(s) = state {
-        println!("  tx_count={}  approx_sum=${:.2}  last_seen={}s ago",
-            s.tx_count, s.approx_sum, now_secs().saturating_sub(s.last_seen));
+        println!(
+            "  tx_count={}  approx_sum=${:.2}  last_seen={}s ago",
+            s.tx_count,
+            s.approx_sum,
+            now_secs().saturating_sub(s.last_seen)
+        );
         println!("  bins: {:?}", s.bins);
         println!("  activity_bitmap=0x{:016x}", s.activity_bitmap);
         println!("  activity_counts(1h, 24h): {:?}", s.activity_counts);
@@ -449,12 +521,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // when writing new nodes and edges together in one request.
 
     let nodes = vec![
-        TransactionNode::new("card",     "card-demo-002").with_key("card"),
+        TransactionNode::new("card", "card-demo-002").with_key("card"),
         TransactionNode::new("merchant", "merchant-demo-002")
             .with_key("merch")
             .with_properties(vec![
-                PropertyEntry::string("name",    "Demo Bookstore"),
-                PropertyEntry::int("mcc",        5942),
+                PropertyEntry::string("name", "Demo Bookstore"),
+                PropertyEntry::int("mcc", 5942),
                 PropertyEntry::string("country", "US"),
             ]),
     ];
@@ -464,9 +536,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // TransactionNodeRef::node(NodeRef::external(...)) can be freely mixed.
     let mut edge_by_key = TransactionEdge::new(
         "TRANSACTS_AT",
-        TransactionNodeRef::request_node_key("card"),  // resolved from nodes[] above
+        TransactionNodeRef::request_node_key("card"), // resolved from nodes[] above
         TransactionNodeRef::request_node_key("merch"),
-    ).with_key("purchase-001");
+    )
+    .with_key("purchase-001");
     edge_by_key.numeric_value = Some(29.99);
     edge_by_key.event_ts_secs = Some(hours_ago(1));
 
@@ -475,32 +548,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "USES_DEVICE",
         TransactionNodeRef::request_node_key("card"),
         TransactionNodeRef::node(NodeRef::external("device", "device-demo-001")),
-    ).with_key("device-link");
+    )
+    .with_key("device-link");
     edge_mixed.event_ts_secs = Some(hours_ago(1));
 
     let result = client
-        .ingest_transaction(
-            Some("txn-guide-001"),
-            &nodes,
-            &[edge_by_key, edge_mixed],
-        )
+        .ingest_transaction(Some("txn-guide-001"), &nodes, &[edge_by_key, edge_mixed])
         .await?;
 
     println!("  transaction_id={}", result.transaction_id);
-    println!("  nodes: created={} existing={} errors={}",
-        result.nodes_created, result.nodes_existing, result.node_errors);
-    println!("  edges: created={} updated={} errors={}",
-        result.edges_created, result.edges_updated, result.edge_errors);
+    println!(
+        "  nodes: created={} existing={} errors={}",
+        result.nodes_created, result.nodes_existing, result.node_errors
+    );
+    println!(
+        "  edges: created={} updated={} errors={}",
+        result.edges_created, result.edges_updated, result.edge_errors
+    );
 
     // Inspect per-item results — useful when you need the allocated NodeId or
     // want to confirm which edges were newly created vs updated.
     for n in &result.node_results {
-        println!("  node[{}] key={:?} node_id={:?} created={} error={:?}",
-            n.index, n.request_node_key, n.node_id, n.created, n.error);
+        println!(
+            "  node[{}] key={:?} node_id={:?} created={} error={:?}",
+            n.index, n.request_node_key, n.node_id, n.created, n.error
+        );
     }
     for e in &result.edge_results {
-        println!("  edge[{}] key={:?} created_new={} error={:?}",
-            e.index, e.request_edge_key, e.created_new, e.error);
+        println!(
+            "  edge[{}] key={:?} created_new={} error={:?}",
+            e.index, e.request_edge_key, e.created_new, e.error
+        );
     }
 
     // =========================================================================
@@ -547,13 +625,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `IngestSender::send` serialises high-level types into the gRPC wire format
     // and queues the message — it does NOT block waiting for server acknowledgement.
     for i in 0u32..200 {
-        let card_id     = format!("card-stream-{i:04}");
+        let card_id = format!("card-stream-{i:04}");
         let merchant_id = format!("merchant-demo-{:03}", (i % 3) + 1);
-        let amount      = 10.0 + (i % 50) as f32 * 5.0;
+        let amount = 10.0 + (i % 50) as f32 * 5.0;
 
         let mut edge = TransactionEdge::new(
             "TRANSACTS_AT",
-            TransactionNodeRef::node(NodeRef::external("card",     &card_id)),
+            TransactionNodeRef::node(NodeRef::external("card", &card_id)),
             TransactionNodeRef::node(NodeRef::external("merchant", &merchant_id)),
         );
         edge.numeric_value = Some(amount);
@@ -565,11 +643,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tx.send(
             Some(&format!("stream-tx-{i}")),
             &[
-                TransactionNode::new("card",     &card_id),
+                TransactionNode::new("card", &card_id),
                 TransactionNode::new("merchant", &merchant_id),
             ],
             &[edge],
-        ).await?;
+        )
+        .await?;
     }
 
     // Dropping the sender signals end-of-stream to the server. The server will
@@ -578,7 +657,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wait for all responses to come back.
     let (created, updated) = reader.await?;
-    println!("  Streaming ingest done: created={} updated={}", created, updated);
+    println!(
+        "  Streaming ingest done: created={} updated={}",
+        created, updated
+    );
 
     // --- Multiple concurrent streams for maximum throughput ------------------
     //
@@ -596,7 +678,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let reader = tokio::spawn(async move {
                 let mut responses = rx;
                 let mut total = 0u32;
-                while let Some(Ok(r)) = responses.next().await { total += r.edges_created; }
+                while let Some(Ok(r)) = responses.next().await {
+                    total += r.edges_created;
+                }
                 total
             });
             for i in 0u32..500 {
@@ -604,15 +688,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let merch = format!("merchant-demo-{:03}", (i % 3) + 1);
                 let mut edge = TransactionEdge::new(
                     "TRANSACTS_AT",
-                    TransactionNodeRef::node(NodeRef::external("card",     &card)),
+                    TransactionNodeRef::node(NodeRef::external("card", &card)),
                     TransactionNodeRef::node(NodeRef::external("merchant", &merch)),
                 );
                 edge.numeric_value = Some(50.0 + i as f32);
-                tx.send(
-                    None,
-                    &[TransactionNode::new("card", &card)],
-                    &[edge],
-                ).await?;
+                tx.send(None, &[TransactionNode::new("card", &card)], &[edge])
+                    .await?;
             }
             drop(tx);
             let created = reader.await.unwrap_or(0);
@@ -623,7 +704,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for h in handles {
         total_stream += h.await?.unwrap_or(0);
     }
-    println!("  4-worker streaming ingest: total created={}", total_stream);
+    println!(
+        "  4-worker streaming ingest: total created={}",
+        total_stream
+    );
 
     // =========================================================================
     // SECTION 8 — Neighbor Queries
@@ -639,18 +723,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== 8. Neighbor Queries ===");
 
     // Create a known card with several merchants for predictable demo output.
-    client.create_node("card", Some("card-demo-nav"), &[]).await?;
+    client
+        .create_node("card", Some("card-demo-nav"), &[])
+        .await?;
     for m in 1u32..=5 {
         let merch = format!("merchant-demo-{m:03}");
         client.create_node("merchant", Some(&merch), &[]).await?;
-        client.upsert_edge(
-            "TRANSACTS_AT",
-            NodeRef::external("card",     "card-demo-nav"),
-            NodeRef::external("merchant", &merch),
-            Some(m as f32 * 30.0),
-            Some(secs_ago(m * 3_600)),
-            None,
-        ).await?;
+        client
+            .upsert_edge(
+                "TRANSACTS_AT",
+                NodeRef::external("card", "card-demo-nav"),
+                NodeRef::external("merchant", &merch),
+                Some(m as f32 * 30.0),
+                Some(secs_ago(m * 3_600)),
+                None,
+            )
+            .await?;
     }
 
     // --- Paginated neighbor list ---------------------------------------------
@@ -662,20 +750,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // all node properties for each neighbor. Use this to enrich results without
     // an extra `get_node` call per neighbor.
 
-    let (neighbors, has_more) = client.get_neighbors(
-        NodeRef::external("card", "card-demo-nav"),
-        "TRANSACTS_AT",
-        true,    // out-neighbors: merchants this card transacted at
-        3,       // page size = 3
-        0,       // cursor = start
-        &[],     // no property filters
-        false,   // don't include neighbor properties (faster)
-    ).await?;
-    println!("  get_neighbors (page 1, size 3): {} results, has_more={}",
-        neighbors.len(), has_more);
+    let (neighbors, has_more) = client
+        .get_neighbors(
+            NodeRef::external("card", "card-demo-nav"),
+            "TRANSACTS_AT",
+            true,  // out-neighbors: merchants this card transacted at
+            3,     // page size = 3
+            0,     // cursor = start
+            &[],   // no property filters
+            false, // don't include neighbor properties (faster)
+        )
+        .await?;
+    println!(
+        "  get_neighbors (page 1, size 3): {} results, has_more={}",
+        neighbors.len(),
+        has_more
+    );
     for n in &neighbors {
-        println!("    neighbor_id={} edge_id={} created={}",
-            n.neighbor_node_id, n.edge_id, n.created_at_us);
+        println!(
+            "    neighbor_id={} edge_id={} created={}",
+            n.neighbor_node_id, n.edge_id, n.created_at_us
+        );
     }
 
     // --- Server-side property filtering --------------------------------------
@@ -696,17 +791,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //   NodePropertyFilter::ts_before(property, unix_secs)
 
     let filters = vec![
-        NodePropertyFilter::int_eq("mcc", 5812),   // only restaurants (MCC 5812)
+        NodePropertyFilter::int_eq("mcc", 5812), // only restaurants (MCC 5812)
     ];
-    let (filtered, _) = client.get_neighbors(
-        NodeRef::external("card", "card-demo-001"),
-        "TRANSACTS_AT",
-        true,
-        50,
-        0,
-        &filters,
-        true,   // include properties so we can print them
-    ).await?;
+    let (filtered, _) = client
+        .get_neighbors(
+            NodeRef::external("card", "card-demo-001"),
+            "TRANSACTS_AT",
+            true,
+            50,
+            0,
+            &filters,
+            true, // include properties so we can print them
+        )
+        .await?;
     println!("  filtered neighbors (mcc=5812): {} found", filtered.len());
     for n in &filtered {
         print!("    neighbor_id={}", n.neighbor_node_id);
@@ -724,10 +821,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Exact count of unique neighbors without fetching the list.
     // Useful for velocity checks: "how many unique merchants has this card hit?"
 
-    let (count, _approx) = client.graph().get_neighbor_count(
-        NodeRef::external("card", "card-demo-nav"),
-        "TRANSACTS_AT",
-    ).await?;
+    let (count, _approx) = client
+        .graph()
+        .get_neighbor_count(NodeRef::external("card", "card-demo-nav"), "TRANSACTS_AT")
+        .await?;
     println!("  neighbor_count(card-demo-nav, TRANSACTS_AT) = {}", count);
 
     // --- Last neighbor (impossible-travel detection) --------------------------
@@ -740,31 +837,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // physically impossible → flag as impossible travel.
 
     // Simulate a US transaction 8 minutes ago and a UK transaction now.
-    client.upsert_edge(
-        "USES_DEVICE",
-        NodeRef::external("card", "card-demo-001"),
-        NodeRef::external("device", "device-demo-001"),
-        None,
-        Some(secs_ago(8 * 60)),     // 8 minutes ago
-        None,
-    ).await?;
-    client.upsert_edge(
-        "USES_DEVICE",
-        NodeRef::external("card", "card-demo-001"),
-        NodeRef::external("device", "device-demo-002"),
-        None,
-        Some(now_secs()),           // right now
-        None,
-    ).await?;
+    client
+        .upsert_edge(
+            "USES_DEVICE",
+            NodeRef::external("card", "card-demo-001"),
+            NodeRef::external("device", "device-demo-001"),
+            None,
+            Some(secs_ago(8 * 60)), // 8 minutes ago
+            None,
+        )
+        .await?;
+    client
+        .upsert_edge(
+            "USES_DEVICE",
+            NodeRef::external("card", "card-demo-001"),
+            NodeRef::external("device", "device-demo-002"),
+            None,
+            Some(now_secs()), // right now
+            None,
+        )
+        .await?;
 
-    let prev = client.graph().get_last_neighbor(
-        NodeRef::external("card", "card-demo-001"),
-        "USES_DEVICE",
-        Some(NodeRef::external("device", "device-demo-002")), // exclude current device
-    ).await?;
+    let prev = client
+        .graph()
+        .get_last_neighbor(
+            NodeRef::external("card", "card-demo-001"),
+            "USES_DEVICE",
+            Some(NodeRef::external("device", "device-demo-002")), // exclude current device
+        )
+        .await?;
     if let Some((prev_node_id, prev_ts)) = prev {
         let gap_mins = now_secs().saturating_sub(prev_ts) / 60;
-        println!("  Previous device: node_id={} last_seen={}min ago", prev_node_id, gap_mins);
+        println!(
+            "  Previous device: node_id={} last_seen={}min ago",
+            prev_node_id, gap_mins
+        );
         if gap_mins < 10 {
             println!("  ⚠ Rapid device switch detected ({} min gap)", gap_mins);
         }
@@ -789,15 +896,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== 9. Node Histogram ===");
 
-    let hist = client.features().query_node_histogram(
-        NodeRef::external("card", "card-demo-001"),
-        "TRANSACTS_AT",
-        48,     // look back 48 hours
-        0,      // 0 days (hourly window only)
-    ).await?;
-    println!("  total_events={} window_covered={}s",
-        hist.total_events, hist.window_covered_secs);
-    let bin_labels = ["<$5","$5-25","$25-50","$50-100","$100-250","$250-500","$500-1k","≥$1k"];
+    let hist = client
+        .features()
+        .query_node_histogram(
+            NodeRef::external("card", "card-demo-001"),
+            "TRANSACTS_AT",
+            48, // look back 48 hours
+            0,  // 0 days (hourly window only)
+        )
+        .await?;
+    println!(
+        "  total_events={} window_covered={}s",
+        hist.total_events, hist.window_covered_secs
+    );
+    let bin_labels = [
+        "<$5", "$5-25", "$25-50", "$50-100", "$100-250", "$250-500", "$500-1k", "≥$1k",
+    ];
     print!("  bins: ");
     for (label, count) in bin_labels.iter().zip(hist.total_counts.iter()) {
         print!("[{label}:{count}] ");
@@ -827,24 +941,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== 10. Feature Vector ===");
 
-    let fv = client.features().get_node_feature_vector(
-        NodeRef::external("card", "card-demo-001"),
-        &["TRANSACTS_AT", "USES_DEVICE"],    // edge types to aggregate
-        24,     // histogram look-back: 24 hours
-        7,      // histogram look-back: 7 days
-        &[
-            NodeRef::external("merchant", "merchant-demo-001"),
-            NodeRef::external("device",   "device-demo-001"),
-        ],
-    ).await?;
+    let fv = client
+        .features()
+        .get_node_feature_vector(
+            NodeRef::external("card", "card-demo-001"),
+            &["TRANSACTS_AT", "USES_DEVICE"], // edge types to aggregate
+            24,                               // histogram look-back: 24 hours
+            7,                                // histogram look-back: 7 days
+            &[
+                NodeRef::external("merchant", "merchant-demo-001"),
+                NodeRef::external("device", "device-demo-001"),
+            ],
+        )
+        .await?;
     println!("  node_id={}", fv.node_id);
     for ef in &fv.edge_features {
-        println!("  [{}] neighbors={} tx_count={} approx_sum=${:.2} bitmap=0x{:016x}",
-            ef.edge_type_name, ef.neighbor_count, ef.total_tx_count,
-            ef.total_approx_sum, ef.activity_bitmap_union);
+        println!(
+            "  [{}] neighbors={} tx_count={} approx_sum=${:.2} bitmap=0x{:016x}",
+            ef.edge_type_name,
+            ef.neighbor_count,
+            ef.total_tx_count,
+            ef.total_approx_sum,
+            ef.activity_bitmap_union
+        );
     }
-    println!("  fraud: direct_score={:.2} flagged_neighbors={} max_neighbor_score={:.2}",
-        fv.direct_fraud_score, fv.fraudulent_neighbor_count, fv.max_neighbor_fraud_score);
+    println!(
+        "  fraud: direct_score={:.2} flagged_neighbors={} max_neighbor_score={:.2}",
+        fv.direct_fraud_score, fv.fraudulent_neighbor_count, fv.max_neighbor_fraud_score
+    );
 
     // =========================================================================
     // SECTION 11 — Fraud Cases
@@ -860,20 +984,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== 11. Fraud Cases ===");
 
     // Create a case for a known compromised device.
-    client.features().create_fraud_case(
-        "case-device-demo-002",
-        &[NodeRef::external("device", "device-demo-002")],
-        0.95,
-        "Device seen on 500+ unrelated cards in 24h — suspected device farm",
-    ).await?;
+    client
+        .features()
+        .create_fraud_case(
+            "case-device-demo-002",
+            &[NodeRef::external("device", "device-demo-002")],
+            0.95,
+            "Device seen on 500+ unrelated cards in 24h — suspected device farm",
+            // The rule that fired. Recorded apart from the reason so labels can
+            // later be grouped by rule instead of parsed out of analyst text.
+            Some("rule_device_fanout"),
+        )
+        .await?;
     println!("  Created case-device-demo-002");
 
+    // Record what the analyst concluded once the case has been investigated.
+    // Rejecting a case withdraws it as fraud evidence from every entity attached
+    // to it, so a rule that misfired stops raising their scores. Confirming one
+    // keeps the evidence and marks it as a label worth learning from.
+    let verdict = client
+        .features()
+        .resolve_fraud_case(
+            "case-device-demo-002",
+            "confirmed",
+            Some("device farm verified against issuer chargebacks"),
+        )
+        .await?;
+    println!(
+        "  case-device-demo-002: {} -> {}",
+        verdict.previous_verdict, verdict.verdict
+    );
+
     // Batch-check all parties in the current transaction.
-    let ctx = client.features().get_fraud_context(&[
-        NodeRef::external("card",     "card-demo-001"),
-        NodeRef::external("merchant", "merchant-demo-001"),
-        NodeRef::external("device",   "device-demo-002"),
-    ]).await?;
+    let ctx = client
+        .features()
+        .get_fraud_context(&[
+            NodeRef::external("card", "card-demo-001"),
+            NodeRef::external("merchant", "merchant-demo-001"),
+            NodeRef::external("device", "device-demo-002"),
+        ])
+        .await?;
 
     if ctx.flagged_nodes.is_empty() {
         println!("  No flagged nodes — transaction parties are clean");
@@ -881,17 +1031,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  FRAUD HITS ({}):", ctx.flagged_nodes.len());
         for n in &ctx.flagged_nodes {
             for case in &n.cases {
-                println!("    node_id={} case={} score={:.2} reason=\"{}\"",
-                    n.node_id, case.case_id, case.fraud_score, case.reason);
+                println!(
+                    "    node_id={} case={} score={:.2} reason=\"{}\"",
+                    n.node_id, case.case_id, case.fraud_score, case.reason
+                );
             }
         }
     }
 
     // Remove a participant from a case after investigation clears it.
-    client.features().remove_fraud_case_node(
-        "case-device-demo-002",
-        NodeRef::external("device", "device-demo-002"),
-    ).await?;
+    client
+        .features()
+        .remove_fraud_case_node(
+            "case-device-demo-002",
+            NodeRef::external("device", "device-demo-002"),
+        )
+        .await?;
     println!("  Removed device-demo-002 from case-device-demo-002");
 
     // =========================================================================
@@ -926,55 +1081,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // dimension. This lets you boost similarity when cards share a boolean attribute
     // (e.g. both are virtual, both are flagged international, etc.).
     let bool_weights = vec![
-        BoolPropertyWeight::new("is_virtual", 0.2),  // 20% weight for shared "virtual card" flag
+        BoolPropertyWeight::new("is_virtual", 0.2), // 20% weight for shared "virtual card" flag
     ];
-    let similar = client.find_similar_nodes(
-        NodeRef::external("card", "card-demo-001"),
-        &[
-            EdgeTypeWeight::new("TRANSACTS_AT", 0.5),  // merchant overlap (primary)
-            EdgeTypeWeight::new("USES_DEVICE",  0.3),  // device overlap (secondary)
-        ],
-        &[],                            // no required edge types
-        &bool_weights,                  // boost score when both cards are virtual
-        &[],                            // no required bool properties
-        5,                              // return top-5 most similar cards
-        0.1,                            // minimum similarity threshold (0.0–1.0)
-        false,                          // don't write SIMILAR_TO edges (query only)
-        "SIMILAR_TO",
-    ).await?;
-    println!("  find_similar_nodes for card-demo-001: {} results", similar.similar_nodes.len());
+    let similar = client
+        .find_similar_nodes(
+            NodeRef::external("card", "card-demo-001"),
+            &[
+                EdgeTypeWeight::new("TRANSACTS_AT", 0.5), // merchant overlap (primary)
+                EdgeTypeWeight::new("USES_DEVICE", 0.3),  // device overlap (secondary)
+            ],
+            &[],           // no required edge types
+            &bool_weights, // boost score when both cards are virtual
+            &[],           // no required bool properties
+            5,             // return top-5 most similar cards
+            0.1,           // minimum similarity threshold (0.0–1.0)
+            false,         // don't write SIMILAR_TO edges (query only)
+            "SIMILAR_TO",
+        )
+        .await?;
+    println!(
+        "  find_similar_nodes for card-demo-001: {} results",
+        similar.similar_nodes.len()
+    );
     for s in &similar.similar_nodes {
-        println!("    node_id={} similarity={:.3} shared_neighbors={}",
-            s.node_id, s.similarity, s.shared_neighbors);
+        println!(
+            "    node_id={} similarity={:.3} shared_neighbors={}",
+            s.node_id, s.similarity, s.shared_neighbors
+        );
     }
 
     // Batch build: compute similarity for ALL cards and write SIMILAR_TO edges.
-    let build_result = client.build_similarity_graph(
-        "card",                         // sweep all nodes of this type
-        &[
-            EdgeTypeWeight::new("TRANSACTS_AT", 0.6),
-            EdgeTypeWeight::new("USES_DEVICE",  0.4),
-        ],
-        &[],                            // no required types
-        &[],                            // no bool property weights
-        &[],                            // no required bool properties
-        10,                             // top-10 SIMILAR_TO edges per card
-        0.05,                           // min similarity
-        "SIMILAR_TO",                   // write edges to this type
-    ).await?;
-    println!("  build_similarity_graph: processed={} created={} updated={} elapsed={}ms",
-        build_result.nodes_processed, build_result.edges_created,
-        build_result.edges_updated, build_result.elapsed_ms);
+    let build_result = client
+        .build_similarity_graph(
+            "card", // sweep all nodes of this type
+            &[
+                EdgeTypeWeight::new("TRANSACTS_AT", 0.6),
+                EdgeTypeWeight::new("USES_DEVICE", 0.4),
+            ],
+            &[],          // no required types
+            &[],          // no bool property weights
+            &[],          // no required bool properties
+            10,           // top-10 SIMILAR_TO edges per card
+            0.05,         // min similarity
+            "SIMILAR_TO", // write edges to this type
+        )
+        .await?;
+    println!(
+        "  build_similarity_graph: processed={} created={} updated={} elapsed={}ms",
+        build_result.nodes_processed,
+        build_result.edges_created,
+        build_result.edges_updated,
+        build_result.elapsed_ms
+    );
 
     // Read a SIMILAR_TO edge to get the stored similarity score.
-    if let Some(sim_state) = client.get_edge_state(
-        "SIMILAR_TO",
-        NodeRef::external("card", "card-demo-001"),
-        NodeRef::external("card", "card-demo-002"),
-        None, None,
-    ).await? {
+    if let Some(sim_state) = client
+        .get_edge_state(
+            "SIMILAR_TO",
+            NodeRef::external("card", "card-demo-001"),
+            NodeRef::external("card", "card-demo-002"),
+            None,
+            None,
+        )
+        .await?
+    {
         // On static edges approx_sum holds the float value (the Jaccard score).
-        println!("  SIMILAR_TO card-demo-001→card-demo-002: score={:.3}", sim_state.approx_sum);
+        println!(
+            "  SIMILAR_TO card-demo-001→card-demo-002: score={:.3}",
+            sim_state.approx_sum
+        );
     }
 
     // =========================================================================
@@ -1004,56 +1179,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut seg = client.segment();
 
     // Step 1 — prefetch feature vector once for this customer.
-    let ctx = seg.prefetch_eval_context(
-        NodeRef::external("card", "card-demo-001"),
-        &["TRANSACTS_AT", "USES_DEVICE"],
-        24,     // histogram hours
-        7,      // histogram days
-    ).await?;
+    let ctx = seg
+        .prefetch_eval_context(
+            NodeRef::external("card", "card-demo-001"),
+            &["TRANSACTS_AT", "USES_DEVICE"],
+            24, // histogram hours
+            7,  // histogram days
+        )
+        .await?;
     println!("  Eval context for node_id={}", ctx.node_id);
-    println!("  tx_count(TRANSACTS_AT)={}", ctx.total_tx_count("TRANSACTS_AT"));
-    println!("  neighbor_count(TRANSACTS_AT)={}", ctx.neighbor_count("TRANSACTS_AT"));
+    println!(
+        "  tx_count(TRANSACTS_AT)={}",
+        ctx.total_tx_count("TRANSACTS_AT")
+    );
+    println!(
+        "  neighbor_count(TRANSACTS_AT)={}",
+        ctx.neighbor_count("TRANSACTS_AT")
+    );
 
     // Step 2 — lazy signals (only called if rules need them).
-    let days_since = seg.days_since_last_neighbor(
-        NodeRef::external("card", "card-demo-001"),
-        "TRANSACTS_AT",
-    ).await?;
+    let days_since = seg
+        .days_since_last_neighbor(NodeRef::external("card", "card-demo-001"), "TRANSACTS_AT")
+        .await?;
     println!("  days_since_last_transact={:.2}", days_since);
 
-    let unique_merchants = seg.neighbor_count(
-        NodeRef::external("card", "card-demo-001"),
-        "TRANSACTS_AT",
-    ).await?;
+    let unique_merchants = seg
+        .neighbor_count(NodeRef::external("card", "card-demo-001"), "TRANSACTS_AT")
+        .await?;
     println!("  unique_merchants={}", unique_merchants);
 
-    let spend_30d = seg.histogram_field(
-        NodeRef::external("card", "card-demo-001"),
-        "TRANSACTS_AT",
-        0,      // hours
-        30,     // days
-        jetgraph_client::HistogramField::TotalEvents,
-    ).await?;
+    let spend_30d = seg
+        .histogram_field(
+            NodeRef::external("card", "card-demo-001"),
+            "TRANSACTS_AT",
+            0,  // hours
+            30, // days
+            jetgraph_client::HistogramField::TotalEvents,
+        )
+        .await?;
     println!("  events_30d={}", spend_30d);
 
     // Segment membership — upsert a MEMBER_OF edge (card → segment node).
     // First ensure the segment node exists.
-    client.create_node("card", Some("seg-high-velocity"), &[]).await?; // segment node
+    client
+        .create_node("card", Some("seg-high-velocity"), &[])
+        .await?; // segment node
     seg.upsert_segment_membership(
         NodeRef::external("card", "card-demo-001"),     // customer
         NodeRef::external("card", "seg-high-velocity"), // segment node
         0.87,                                           // confidence
-    ).await?;
+    )
+    .await?;
     println!("  Upserted MEMBER_OF edge with confidence=0.87");
 
     // Query which segments a customer belongs to.
-    let memberships = seg.get_customer_segments(
-        NodeRef::external("card", "card-demo-001"),
-    ).await?;
+    let memberships = seg
+        .get_customer_segments(NodeRef::external("card", "card-demo-001"))
+        .await?;
     println!("  Customer segments: {} memberships", memberships.len());
     for m in &memberships {
-        println!("    segment='{}' confidence={:.2} last_seen={}",
-            m.segment_name, m.confidence, m.last_seen_secs);
+        println!(
+            "    segment='{}' confidence={:.2} last_seen={}",
+            m.segment_name, m.confidence, m.last_seen_secs
+        );
     }
 
     // =========================================================================

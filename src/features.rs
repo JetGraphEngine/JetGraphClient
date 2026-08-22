@@ -1,7 +1,7 @@
 //! Feature service client: histograms, fraud context, flagging.
 
-use tonic::transport::Channel;
 use crate::{BoolPropertyWeight, ClientError, EdgeTypeWeight, NodeRef};
+use tonic::transport::Channel;
 
 pub(crate) mod features_proto {
     tonic::include_proto!("features");
@@ -14,11 +14,16 @@ fn node_ref_to_proto(r: &NodeRef) -> features_proto::NodeRef {
         NodeRef::NodeId(id) => features_proto::NodeRef {
             identifier: Some(features_proto::node_ref::Identifier::NodeId(*id)),
         },
-        NodeRef::External { node_type, external_id } => features_proto::NodeRef {
-            identifier: Some(features_proto::node_ref::Identifier::External(features_proto::ExternalRef {
-                node_type_name: node_type.clone(),
-                external_id: external_id.clone(),
-            })),
+        NodeRef::External {
+            node_type,
+            external_id,
+        } => features_proto::NodeRef {
+            identifier: Some(features_proto::node_ref::Identifier::External(
+                features_proto::ExternalRef {
+                    node_type_name: node_type.clone(),
+                    external_id: external_id.clone(),
+                },
+            )),
         },
     }
 }
@@ -50,7 +55,11 @@ impl FeatureClient {
             window_days,
             include_buckets: false,
         };
-        let r = self.client.query_node_histogram(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .query_node_histogram(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok(NodeHistogramResult {
             total_events: inner.total_events,
@@ -79,21 +88,107 @@ impl FeatureClient {
                 .map(|n| node_ref_to_proto(n))
                 .collect(),
         };
-        let r = self.client.get_node_feature_vector(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .get_node_feature_vector(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok(NodeFeatureVectorResponse {
             node_id: inner.node_id,
-            edge_features: inner.edge_features.into_iter().map(|ef| EdgeTypeFeatures {
-                edge_type_name: ef.edge_type_name,
-                neighbor_count: ef.neighbor_count,
-                activity_bitmap_union: ef.activity_bitmap_union,
-                total_approx_sum: ef.total_approx_sum,
-                total_tx_count: ef.total_tx_count,
-            }).collect(),
+            edge_features: inner
+                .edge_features
+                .into_iter()
+                .map(|ef| EdgeTypeFeatures {
+                    edge_type_name: ef.edge_type_name,
+                    neighbor_count: ef.neighbor_count,
+                    activity_bitmap_union: ef.activity_bitmap_union,
+                    total_approx_sum: ef.total_approx_sum,
+                    total_tx_count: ef.total_tx_count,
+                })
+                .collect(),
             direct_fraud_score: inner.direct_fraud_score,
             fraudulent_neighbor_count: inner.fraudulent_neighbor_count,
             max_neighbor_fraud_score: inner.max_neighbor_fraud_score,
         })
+    }
+
+    /// Read the persistent deterministic historical 32D vector without an
+    /// adjacency scan.
+    pub async fn get_stored_node_feature_vector(
+        &mut self,
+        node: NodeRef,
+    ) -> Result<StoredNodeFeatureVector, ClientError> {
+        let response = self
+            .client
+            .get_stored_node_feature_vector(features_proto::StoredNodeFeatureVectorRequest {
+                node: Some(node_ref_to_proto(&node)),
+            })
+            .await
+            .map_err(ClientError::from)?
+            .into_inner();
+        Ok(StoredNodeFeatureVector {
+            node_id: response.node_id,
+            slots: response
+                .slots
+                .into_iter()
+                .map(|slot| StoredNodeFeatureSlot {
+                    index: slot.index,
+                    name: slot.name,
+                    raw: slot.raw,
+                    effective: slot.effective,
+                    support: slot.support,
+                    used_fallback: slot.used_fallback,
+                })
+                .collect(),
+            valid_mask: response.valid_mask,
+            fallback_mask: response.fallback_mask,
+            age_secs: response.age_secs,
+            confidence: response.confidence,
+            schema_version: response.schema_version,
+            quality_flags: response.quality_flags,
+        })
+    }
+
+    pub async fn get_feature_backfill_status(
+        &mut self,
+    ) -> Result<Vec<FeatureBackfillStatus>, ClientError> {
+        let response = self
+            .client
+            .get_feature_backfill_status(features_proto::FeatureBackfillStatusRequest {})
+            .await
+            .map_err(ClientError::from)?
+            .into_inner();
+        Ok(response
+            .statuses
+            .into_iter()
+            .map(FeatureBackfillStatus::from)
+            .collect())
+    }
+
+    pub async fn start_feature_backfill(
+        &mut self,
+        node_type: &str,
+    ) -> Result<FeatureBackfillStatus, ClientError> {
+        self.start_feature_backfill_rate_limited(node_type, 0, 0)
+            .await
+    }
+
+    pub async fn start_feature_backfill_rate_limited(
+        &mut self,
+        node_type: &str,
+        batch_size: u32,
+        nodes_per_second: u32,
+    ) -> Result<FeatureBackfillStatus, ClientError> {
+        self.client
+            .start_feature_backfill(features_proto::StartFeatureBackfillRequest {
+                node_type: node_type.to_string(),
+                batch_size,
+                nodes_per_second,
+            })
+            .await
+            .map(|response| FeatureBackfillStatus::from(response.into_inner()))
+            .map_err(ClientError::from)
     }
 
     /// Check which of the given nodes are linked to fraud cases.
@@ -104,7 +199,11 @@ impl FeatureClient {
         let req = features_proto::FraudContextQuery {
             nodes: nodes.iter().map(|n| node_ref_to_proto(n)).collect(),
         };
-        let r = self.client.get_fraud_context(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .get_fraud_context(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok(FraudContext {
             flagged_nodes: inner
@@ -120,6 +219,8 @@ impl FeatureClient {
                             case_id: case.case_id,
                             fraud_score: case.fraud_score,
                             reason: case.reason,
+                            rule_id: case.rule_id,
+                            verdict: case.verdict,
                         })
                         .collect(),
                 })
@@ -128,21 +229,64 @@ impl FeatureClient {
     }
 
     /// Create a fraud case and link all participant nodes to it.
+    ///
+    /// Pass `rule_id` when a detection rule opened the case. It is stored apart
+    /// from `reason` so labels can later be grouped by the rule that produced
+    /// them, which is what keeps a model from simply relearning the rule set.
     pub async fn create_fraud_case(
         &mut self,
         case_id: &str,
         participants: &[NodeRef],
         fraud_score: f32,
         reason: &str,
+        rule_id: Option<&str>,
     ) -> Result<u64, ClientError> {
         let req = features_proto::CreateFraudCaseRequest {
             case_id: case_id.to_string(),
             participants: participants.iter().map(|n| node_ref_to_proto(n)).collect(),
             fraud_score,
             reason: reason.to_string(),
+            rule_id: rule_id.unwrap_or_default().to_string(),
         };
-        let r = self.client.create_fraud_case(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .create_fraud_case(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(r.into_inner().case_node_id)
+    }
+
+    /// Record what an analyst concluded about a case.
+    ///
+    /// `verdict` accepts `open`, `confirmed`, `false_positive` or
+    /// `inconclusive`. Rejecting a case withdraws it as fraud evidence from
+    /// every entity attached to it, so a misfiring rule stops raising their
+    /// scores; reversing the rejection restores it. Sending the same verdict
+    /// twice changes nothing.
+    pub async fn resolve_fraud_case(
+        &mut self,
+        case_id: &str,
+        verdict: &str,
+        note: Option<&str>,
+    ) -> Result<FraudCaseResolution, ClientError> {
+        let req = features_proto::ResolveFraudCaseRequest {
+            case_id: case_id.to_string(),
+            verdict: verdict.to_string(),
+            note: note.unwrap_or_default().to_string(),
+        };
+        let r = self
+            .client
+            .resolve_fraud_case(req)
+            .await
+            .map_err(ClientError::from)?;
+        let inner = r.into_inner();
+        Ok(FraudCaseResolution {
+            case_node_id: inner.case_node_id,
+            previous_verdict: inner.previous_verdict,
+            verdict: inner.verdict,
+            participants_retracted: inner.participants_retracted,
+            participants_reinstated: inner.participants_reinstated,
+        })
     }
 
     /// Add participants to an existing fraud case.
@@ -157,7 +301,10 @@ impl FeatureClient {
             participants: participants.iter().map(|n| node_ref_to_proto(n)).collect(),
             fraud_score,
         };
-        self.client.add_fraud_case_nodes(req).await.map_err(ClientError::from)?;
+        self.client
+            .add_fraud_case_nodes(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(())
     }
 
@@ -171,7 +318,10 @@ impl FeatureClient {
             case_id: case_id.to_string(),
             participant: Some(node_ref_to_proto(&participant)),
         };
-        self.client.remove_fraud_case_node(req).await.map_err(ClientError::from)?;
+        self.client
+            .remove_fraud_case_node(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(())
     }
 
@@ -196,47 +346,63 @@ impl FeatureClient {
     /// weighted score into `similar_to_edge_type` (must exist with minimal_payload=true).
     pub async fn find_similar_nodes(
         &mut self,
-        node:                    NodeRef,
-        weighted_edge_types:     &[EdgeTypeWeight],
-        required_edge_types:     &[&str],
-        bool_property_weights:   &[BoolPropertyWeight],
+        node: NodeRef,
+        weighted_edge_types: &[EdgeTypeWeight],
+        required_edge_types: &[&str],
+        bool_property_weights: &[BoolPropertyWeight],
         required_bool_properties: &[&str],
-        k:                       u32,
-        min_similarity:          f32,
-        upsert_edges:            bool,
-        similar_to_edge_type:    &str,
+        k: u32,
+        min_similarity: f32,
+        upsert_edges: bool,
+        similar_to_edge_type: &str,
     ) -> Result<FindSimilarNodesResult, ClientError> {
         let req = features_proto::FindSimilarNodesRequest {
             node: Some(node_ref_to_proto(&node)),
-            weighted_edge_types: weighted_edge_types.iter().map(|etw| {
-                features_proto::EdgeTypeWeight {
+            weighted_edge_types: weighted_edge_types
+                .iter()
+                .map(|etw| features_proto::EdgeTypeWeight {
                     edge_type: etw.edge_type.clone(),
-                    weight:    etw.weight,
-                }
-            }).collect(),
-            required_edge_types: required_edge_types.iter().map(|s| (*s).to_string()).collect(),
-            bool_property_weights: bool_property_weights.iter().map(|bpw| {
-                features_proto::BoolPropertyWeight {
+                    weight: etw.weight,
+                })
+                .collect(),
+            required_edge_types: required_edge_types
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+            bool_property_weights: bool_property_weights
+                .iter()
+                .map(|bpw| features_proto::BoolPropertyWeight {
                     property_name: bpw.property_name.clone(),
-                    weight:        bpw.weight,
-                }
-            }).collect(),
-            required_bool_properties: required_bool_properties.iter().map(|s| (*s).to_string()).collect(),
-            edge_types:           vec![],
+                    weight: bpw.weight,
+                })
+                .collect(),
+            required_bool_properties: required_bool_properties
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+            edge_types: vec![],
             k,
             min_similarity,
             upsert_edges,
             similar_to_edge_type: similar_to_edge_type.to_string(),
         };
-        let r = self.client.find_similar_nodes(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .find_similar_nodes(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok(FindSimilarNodesResult {
             query_node_id: inner.query_node_id,
-            similar_nodes: inner.similar_nodes.into_iter().map(|sn| SimilarNodeInfo {
-                node_id:          sn.node_id,
-                similarity:       sn.similarity,
-                shared_neighbors: sn.shared_neighbors,
-            }).collect(),
+            similar_nodes: inner
+                .similar_nodes
+                .into_iter()
+                .map(|sn| SimilarNodeInfo {
+                    node_id: sn.node_id,
+                    similarity: sn.similarity,
+                    shared_neighbors: sn.shared_neighbors,
+                })
+                .collect(),
         })
     }
 
@@ -244,14 +410,15 @@ impl FeatureClient {
     ///
     /// The edge type definition (schema) is preserved; only the data is removed.
     /// Returns the number of (src, dst) pairs that were cleared.
-    pub async fn clear_edge_type_data(
-        &mut self,
-        edge_type_name: &str,
-    ) -> Result<u64, ClientError> {
+    pub async fn clear_edge_type_data(&mut self, edge_type_name: &str) -> Result<u64, ClientError> {
         let req = features_proto::ClearEdgeTypeDataRequest {
             edge_type_name: edge_type_name.to_string(),
         };
-        let r = self.client.clear_edge_type_data(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .clear_edge_type_data(req)
+            .await
+            .map_err(ClientError::from)?;
         Ok(r.into_inner().pairs_removed)
     }
 
@@ -272,43 +439,55 @@ impl FeatureClient {
     /// for a candidate to be linked. Pass `&[]` for no constraints.
     pub async fn build_similarity_graph(
         &mut self,
-        node_type:               &str,
-        weighted_edge_types:     &[EdgeTypeWeight],
-        required_edge_types:     &[&str],
-        bool_property_weights:   &[BoolPropertyWeight],
+        node_type: &str,
+        weighted_edge_types: &[EdgeTypeWeight],
+        required_edge_types: &[&str],
+        bool_property_weights: &[BoolPropertyWeight],
         required_bool_properties: &[&str],
-        k:                       u32,
-        min_similarity:          f32,
-        similar_to_edge_type:    &str,
+        k: u32,
+        min_similarity: f32,
+        similar_to_edge_type: &str,
     ) -> Result<BuildSimilarityGraphResult, ClientError> {
         let req = features_proto::BuildSimilarityGraphRequest {
             node_type: node_type.to_string(),
-            weighted_edge_types: weighted_edge_types.iter().map(|etw| {
-                features_proto::EdgeTypeWeight {
+            weighted_edge_types: weighted_edge_types
+                .iter()
+                .map(|etw| features_proto::EdgeTypeWeight {
                     edge_type: etw.edge_type.clone(),
-                    weight:    etw.weight,
-                }
-            }).collect(),
-            required_edge_types: required_edge_types.iter().map(|s| (*s).to_string()).collect(),
-            bool_property_weights: bool_property_weights.iter().map(|bpw| {
-                features_proto::BoolPropertyWeight {
+                    weight: etw.weight,
+                })
+                .collect(),
+            required_edge_types: required_edge_types
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+            bool_property_weights: bool_property_weights
+                .iter()
+                .map(|bpw| features_proto::BoolPropertyWeight {
                     property_name: bpw.property_name.clone(),
-                    weight:        bpw.weight,
-                }
-            }).collect(),
-            required_bool_properties: required_bool_properties.iter().map(|s| (*s).to_string()).collect(),
-            edge_types:           vec![],
+                    weight: bpw.weight,
+                })
+                .collect(),
+            required_bool_properties: required_bool_properties
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+            edge_types: vec![],
             k,
             min_similarity,
             similar_to_edge_type: similar_to_edge_type.to_string(),
         };
-        let r = self.client.build_similarity_graph(req).await.map_err(ClientError::from)?;
+        let r = self
+            .client
+            .build_similarity_graph(req)
+            .await
+            .map_err(ClientError::from)?;
         let inner = r.into_inner();
         Ok(BuildSimilarityGraphResult {
             nodes_processed: inner.nodes_processed,
-            edges_created:   inner.edges_created,
-            edges_updated:   inner.edges_updated,
-            elapsed_ms:      inner.elapsed_ms,
+            edges_created: inner.edges_created,
+            edges_updated: inner.edges_updated,
+            elapsed_ms: inner.elapsed_ms,
         })
     }
 }
@@ -330,6 +509,47 @@ pub struct NodeFeatureVectorResponse {
 }
 
 #[derive(Debug, Clone)]
+pub struct StoredNodeFeatureSlot {
+    pub index: u32,
+    pub name: String,
+    pub raw: f32,
+    pub effective: f32,
+    pub support: u32,
+    pub used_fallback: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredNodeFeatureVector {
+    pub node_id: u64,
+    pub slots: Vec<StoredNodeFeatureSlot>,
+    pub valid_mask: u32,
+    pub fallback_mask: u32,
+    pub age_secs: u64,
+    pub confidence: f32,
+    pub schema_version: u32,
+    pub quality_flags: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct FeatureBackfillStatus {
+    pub node_type: String,
+    pub scanned: u64,
+    pub total: u64,
+    pub complete: bool,
+}
+
+impl From<features_proto::FeatureBackfillStatus> for FeatureBackfillStatus {
+    fn from(value: features_proto::FeatureBackfillStatus) -> Self {
+        Self {
+            node_type: value.node_type,
+            scanned: value.scanned,
+            total: value.total,
+            complete: value.complete,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct EdgeTypeFeatures {
     pub edge_type_name: String,
     pub neighbor_count: u64,
@@ -345,6 +565,22 @@ pub struct FraudCaseInfo {
     pub case_id: String,
     pub fraud_score: f32,
     pub reason: String,
+    /// Detection rule that opened the case, empty when opened by hand.
+    pub rule_id: String,
+    /// `open`, `confirmed`, `false_positive` or `inconclusive`.
+    pub verdict: String,
+}
+
+/// What recording a verdict changed on the server.
+#[derive(Debug, Clone)]
+pub struct FraudCaseResolution {
+    pub case_node_id: u64,
+    pub previous_verdict: String,
+    pub verdict: String,
+    /// Participants that lost this case as fraud evidence.
+    pub participants_retracted: u32,
+    /// Participants that regained it, when a rejection was reversed.
+    pub participants_reinstated: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -360,8 +596,8 @@ pub struct FraudContext {
 
 #[derive(Debug, Clone)]
 pub struct SimilarNodeInfo {
-    pub node_id:          u64,
-    pub similarity:       f32,
+    pub node_id: u64,
+    pub similarity: f32,
     pub shared_neighbors: u32,
 }
 
@@ -374,7 +610,7 @@ pub struct FindSimilarNodesResult {
 #[derive(Debug, Clone)]
 pub struct BuildSimilarityGraphResult {
     pub nodes_processed: u64,
-    pub edges_created:   u64,
-    pub edges_updated:   u64,
-    pub elapsed_ms:      u64,
+    pub edges_created: u64,
+    pub edges_updated: u64,
+    pub elapsed_ms: u64,
 }

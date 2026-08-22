@@ -17,13 +17,16 @@
 #[derive(Debug, Clone)]
 pub struct EdgeTypeWeight {
     pub edge_type: String,
-    pub weight:    f32,
+    pub weight: f32,
 }
 
 impl EdgeTypeWeight {
     /// Convenience constructor.
     pub fn new(edge_type: impl Into<String>, weight: f32) -> Self {
-        Self { edge_type: edge_type.into(), weight }
+        Self {
+            edge_type: edge_type.into(),
+            weight,
+        }
     }
 }
 
@@ -37,13 +40,16 @@ impl EdgeTypeWeight {
 #[derive(Debug, Clone)]
 pub struct BoolPropertyWeight {
     pub property_name: String,
-    pub weight:        f32,
+    pub weight: f32,
 }
 
 impl BoolPropertyWeight {
     /// Convenience constructor.
     pub fn new(property_name: impl Into<String>, weight: f32) -> Self {
-        Self { property_name: property_name.into(), weight }
+        Self {
+            property_name: property_name.into(),
+            weight,
+        }
     }
 }
 
@@ -51,7 +57,10 @@ impl BoolPropertyWeight {
 #[derive(Debug, Clone)]
 pub enum NodeRef {
     NodeId(u64),
-    External { node_type: String, external_id: String },
+    External {
+        node_type: String,
+        external_id: String,
+    },
 }
 
 impl NodeRef {
@@ -180,6 +189,20 @@ pub struct IngestTransactionResult {
     pub edge_errors: u32,
     pub node_results: Vec<NodeIngestOutcome>,
     pub edge_results: Vec<EdgeIngestOutcome>,
+    pub fraud_score: Option<f32>,
+    pub score_confidence: Option<f32>,
+    pub score_status: String,
+    pub fraud_decision: bool,
+    pub scoring_profile_version: u32,
+    pub fraud_model_version: u32,
+    pub cold_start: bool,
+    pub scoring_features: Vec<ScoredFeatureValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScoredFeatureValue {
+    pub name: String,
+    pub value: f32,
 }
 
 /// A property entry (name, value).
@@ -191,16 +214,28 @@ pub struct PropertyEntry {
 
 impl PropertyEntry {
     pub fn int(name: impl Into<String>, v: i64) -> Self {
-        Self { name: name.into(), value: PropertyValue::Int(v) }
+        Self {
+            name: name.into(),
+            value: PropertyValue::Int(v),
+        }
     }
     pub fn float(name: impl Into<String>, v: f64) -> Self {
-        Self { name: name.into(), value: PropertyValue::Float(v) }
+        Self {
+            name: name.into(),
+            value: PropertyValue::Float(v),
+        }
     }
     pub fn string(name: impl Into<String>, v: impl Into<String>) -> Self {
-        Self { name: name.into(), value: PropertyValue::String(v.into()) }
+        Self {
+            name: name.into(),
+            value: PropertyValue::String(v.into()),
+        }
     }
     pub fn bool(name: impl Into<String>, v: bool) -> Self {
-        Self { name: name.into(), value: PropertyValue::Bool(v) }
+        Self {
+            name: name.into(),
+            value: PropertyValue::Bool(v),
+        }
     }
 }
 
@@ -280,17 +315,17 @@ pub struct EdgeState {
 /// A neighbor edge from GetNeighbors.
 #[derive(Debug, Clone)]
 pub struct NeighborEdge {
-    pub neighbor_node_id:    u64,
-    pub edge_id:             u64,
-    pub created_at_us:       i64,
+    pub neighbor_node_id: u64,
+    pub edge_id: u64,
+    pub created_at_us: i64,
     /// The type name of the neighbour node (e.g. `"Card"`).
     /// Populated when `include_neighbor_props = true` or filters are applied.
-    pub neighbor_node_type:  String,
+    pub neighbor_node_type: String,
     /// The external ID of the neighbour, if it has one.
     pub neighbor_external_id: Option<String>,
     /// All registered properties of the neighbour node.
     /// Empty when `include_neighbor_props = false`.
-    pub neighbor_props:      Vec<PropertyEntry>,
+    pub neighbor_props: Vec<PropertyEntry>,
 }
 
 // ---------------------------------------------------------------------------
@@ -328,12 +363,12 @@ pub enum EdgeStateField {
 /// A segment a customer belongs to, returned by `get_customer_segments`.
 #[derive(Debug, Clone)]
 pub struct SegmentMembership {
-    pub segment_name:    String,
+    pub segment_name: String,
     pub segment_node_id: u64,
     /// Confidence score stored as the edge's float value (0.0–1.0).
-    pub confidence:      f32,
+    pub confidence: f32,
     /// Unix timestamp (seconds) of the last evaluation that set this membership.
-    pub last_seen_secs:  u32,
+    pub last_seen_secs: u32,
 }
 
 /// A member of a segment, returned by `get_segment_members`.
@@ -342,17 +377,17 @@ pub struct SegmentMember {
     pub customer_node_id: u64,
     /// Human-readable external ID of the member node (e.g. "card-velocity").
     /// `None` if the node was created without an external ID.
-    pub external_id:      Option<String>,
+    pub external_id: Option<String>,
     /// Confidence score stored as the edge's float value (0.0–1.0).
-    pub confidence:       f32,
+    pub confidence: f32,
     /// Unix timestamp (seconds) of the last evaluation that set this membership.
-    pub last_seen_secs:   u32,
+    pub last_seen_secs: u32,
 }
 
 /// A predicate on a neighbour node's property for use with `get_neighbors`.
 #[derive(Debug, Clone)]
 pub struct NodePropertyFilter {
-    pub property:  String,
+    pub property: String,
     pub predicate: NodePropPredicate,
 }
 
@@ -371,31 +406,58 @@ pub enum NodePropPredicate {
 
 impl NodePropertyFilter {
     pub fn int_gt(property: &str, val: i64) -> Self {
-        Self { property: property.to_string(), predicate: NodePropPredicate::IntGt(val) }
+        Self {
+            property: property.to_string(),
+            predicate: NodePropPredicate::IntGt(val),
+        }
     }
     pub fn int_lt(property: &str, val: i64) -> Self {
-        Self { property: property.to_string(), predicate: NodePropPredicate::IntLt(val) }
+        Self {
+            property: property.to_string(),
+            predicate: NodePropPredicate::IntLt(val),
+        }
     }
     pub fn int_eq(property: &str, val: i64) -> Self {
-        Self { property: property.to_string(), predicate: NodePropPredicate::IntEq(val) }
+        Self {
+            property: property.to_string(),
+            predicate: NodePropPredicate::IntEq(val),
+        }
     }
     pub fn float_gt(property: &str, val: f64) -> Self {
-        Self { property: property.to_string(), predicate: NodePropPredicate::FloatGt(val) }
+        Self {
+            property: property.to_string(),
+            predicate: NodePropPredicate::FloatGt(val),
+        }
     }
     pub fn float_lt(property: &str, val: f64) -> Self {
-        Self { property: property.to_string(), predicate: NodePropPredicate::FloatLt(val) }
+        Self {
+            property: property.to_string(),
+            predicate: NodePropPredicate::FloatLt(val),
+        }
     }
     pub fn ts_after(property: &str, val: i64) -> Self {
-        Self { property: property.to_string(), predicate: NodePropPredicate::TsAfter(val) }
+        Self {
+            property: property.to_string(),
+            predicate: NodePropPredicate::TsAfter(val),
+        }
     }
     pub fn ts_before(property: &str, val: i64) -> Self {
-        Self { property: property.to_string(), predicate: NodePropPredicate::TsBefore(val) }
+        Self {
+            property: property.to_string(),
+            predicate: NodePropPredicate::TsBefore(val),
+        }
     }
     pub fn string_eq(property: &str, val: &str) -> Self {
-        Self { property: property.to_string(), predicate: NodePropPredicate::StringEq(val.to_string()) }
+        Self {
+            property: property.to_string(),
+            predicate: NodePropPredicate::StringEq(val.to_string()),
+        }
     }
     pub fn bool_eq(property: &str, val: bool) -> Self {
-        Self { property: property.to_string(), predicate: NodePropPredicate::BoolEq(val) }
+        Self {
+            property: property.to_string(),
+            predicate: NodePropPredicate::BoolEq(val),
+        }
     }
 }
 
@@ -413,7 +475,7 @@ impl NodePropertyFilter {
 pub struct EdgeFilter {
     pub min_created_at_us: Option<i64>,
     pub max_created_at_us: Option<i64>,
-    pub property_filters:  Vec<NodePropertyFilter>,
+    pub property_filters: Vec<NodePropertyFilter>,
 }
 
 impl EdgeFilter {

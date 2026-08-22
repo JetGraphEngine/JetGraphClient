@@ -8,6 +8,15 @@ service SchemaService {
     rpc FinalizeSchema           (FinalizeRequest)      returns (FinalizeResponse);
     rpc GetSchema                (GetSchemaRequest)     returns (GetSchemaResponse);
     rpc GetMemoryUsage           (GetMemoryUsageRequest) returns (GetMemoryUsageResponse);
+    rpc RegisterNodeFeatureSchema (NodeFeatureSchemaSpec) returns (FeatureConfigResponse);
+    rpc RegisterTransactionFeatureProfile (TransactionFeatureProfileSpec) returns (FeatureConfigResponse);
+    rpc GetFeatureConfiguration  (GetFeatureConfigurationRequest) returns (GetFeatureConfigurationResponse);
+    // Propose a compile-legal, budget-fitted node feature schema. The engine
+    // owns the legality rules, so a suggestion never fails to register.
+    rpc SuggestNodeFeatureSchema (SuggestNodeFeatureSchemaRequest) returns (SuggestNodeFeatureSchemaResponse);
+    // Propose a transaction profile over the enabled node schemas named in the
+    // request, with weights scaled so ordinary traffic ranks mid-range.
+    rpc SuggestTransactionProfile (SuggestTransactionProfileRequest) returns (SuggestTransactionProfileResponse);
     // Remove an edge type from the live schema and drop all edges of that type.
     rpc RemoveEdgeType           (RemoveEdgeTypeRequest) returns (RemoveEdgeTypeResponse);
 }
@@ -21,7 +30,7 @@ enum ExternalIdKind {
 }
 
 message NodeTypeSpec {
-    string         name        = 1;
+    string         name       = 1;
     // Omitting this field defaults to NUMERIC (the proto3 zero value).
     ExternalIdKind ext_id_kind = 2;
 }
@@ -103,8 +112,8 @@ message FinalizeRequest {}
 message GetSchemaRequest {}
 
 message NodeTypeInfo {
-    uint32         id          = 1;
-    string         name        = 2;
+    uint32         id         = 1;
+    string         name       = 2;
     ExternalIdKind ext_id_kind = 3;
 }
 
@@ -116,7 +125,7 @@ message EdgeTypeInfo {
     uint64 state_ttl_secs = 5;
     // Seconds per tick for the mandatory 21-tick activity bitmap on this edge type.
     uint64 tick_size_secs = 6;
-    // The name of the single boolean property stored in bit 63 of flags, or empty if none.
+    // Name of the optional boolean property for this edge type. Empty = none registered.
     string bool_property  = 7;
     // True when this edge type was registered as symmetric (undirected).
     bool is_symmetric     = 8;
@@ -134,6 +143,8 @@ message GetSchemaResponse {
     repeated NodeTypeInfo node_types  = 2;
     repeated EdgeTypeInfo edge_types  = 3;
     repeated PropertyInfo properties  = 4;
+    repeated NodeFeatureSchemaSpec node_feature_schemas = 5;
+    repeated TransactionFeatureProfileSpec transaction_feature_profiles = 6;
 }
 
 message NodeTypeResponse {
@@ -161,6 +172,7 @@ message MemoryEstimate {
     uint64 histogram_bytes      = 4;
     uint64 runtime_bytes        = 5;
     string breakdown_text       = 6;
+    uint64 feature_bytes        = 7;
 }
 
 message GetMemoryUsageRequest {}
@@ -180,4 +192,292 @@ message RemoveEdgeTypeResponse {
     uint32 edge_type_id   = 1;
     // How many edge pairs were dropped from the in-memory store.
     uint64 pairs_dropped  = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic historical node vectors and transaction scoring profiles
+// ---------------------------------------------------------------------------
+
+enum NodeFeatureSourceKind {
+    NODE_FEATURE_SOURCE_UNUSED = 0;
+    NODE_FEATURE_SOURCE_CONSTANT = 1;
+    NODE_FEATURE_SOURCE_NODE_PROPERTY = 2;
+    NODE_FEATURE_SOURCE_EDGE_AGGREGATE = 3;
+    NODE_FEATURE_SOURCE_FRAUD_CASE = 4;
+    NODE_FEATURE_SOURCE_NODE_AGE = 5;
+    NODE_FEATURE_SOURCE_CONFIDENCE = 6;
+}
+
+enum FeatureDirection {
+    FEATURE_DIRECTION_OUT = 0;
+    FEATURE_DIRECTION_IN = 1;
+    FEATURE_DIRECTION_BOTH = 2;
+}
+
+enum EdgeFeatureMetric {
+    EDGE_FEATURE_EVENT_COUNT = 0;
+    EDGE_FEATURE_VALUE_SUM = 1;
+    EDGE_FEATURE_VALUE_MEAN = 2;
+    EDGE_FEATURE_ACTIVE_DEGREE = 3;
+    EDGE_FEATURE_LAST_SEEN = 4;
+    EDGE_FEATURE_HISTOGRAM_COUNT = 5;
+    EDGE_FEATURE_NEIGHBOR_ENTROPY = 6;
+    EDGE_FEATURE_ACTIVITY_TICK_COUNT = 7;
+}
+
+enum FraudCaseMetric {
+    FRAUD_CASE_METRIC_COUNT = 0;
+    FRAUD_CASE_METRIC_MAX_SCORE = 1;
+    FRAUD_CASE_METRIC_LAST_SEEN = 2;
+}
+
+enum FeatureRetention {
+    FEATURE_RETENTION_HISTORICAL = 0;
+    FEATURE_RETENTION_ACTIVE = 1;
+}
+
+enum FeatureTransformKind {
+    FEATURE_TRANSFORM_IDENTITY = 0;
+    FEATURE_TRANSFORM_LOG1P = 1;
+    FEATURE_TRANSFORM_CLAMP = 2;
+    FEATURE_TRANSFORM_SCALE = 3;
+}
+
+enum FeatureFallbackKind {
+    FEATURE_FALLBACK_ZERO = 0;
+    FEATURE_FALLBACK_CONSTANT = 1;
+    FEATURE_FALLBACK_POPULATION_MEAN = 2;
+}
+
+message NodeFeatureSlotSpec {
+    uint32 index = 1;
+    string name = 2;
+    NodeFeatureSourceKind source_kind = 3;
+    string node_property = 4;
+    string edge_type = 5;
+    FeatureDirection direction = 6;
+    EdgeFeatureMetric edge_metric = 7;
+    uint32 window_secs = 8;
+    FraudCaseMetric fraud_case_metric = 9;
+    float constant_value = 10;
+    float weight = 11;
+    FeatureTransformKind transform = 12;
+    float transform_min = 13;
+    float transform_max = 14;
+    float transform_multiplier = 15;
+    float transform_offset = 16;
+    FeatureRetention retention = 17;
+    uint32 minimum_evidence = 18;
+    FeatureFallbackKind fallback = 19;
+    float fallback_constant = 20;
+    uint32 population_minimum = 21;
+}
+
+message NodeFeatureSchemaSpec {
+    string node_type = 1;
+    uint32 version = 2;
+    bool enabled = 3;
+    // Up to 32 entries. Missing indices are explicit zero slots.
+    repeated NodeFeatureSlotSpec slots = 4;
+}
+
+enum ProfileInputSourceKind {
+    PROFILE_INPUT_HISTORICAL_SLOT = 0;
+    PROFILE_INPUT_HISTORICAL_CONFIDENCE = 1;
+    PROFILE_INPUT_TRANSIENT_AMOUNT = 2;
+    PROFILE_INPUT_TRANSIENT_AMOUNT_ZSCORE = 3;
+    PROFILE_INPUT_TRANSIENT_EDGE_COUNT = 4;
+    PROFILE_INPUT_TRANSIENT_NODE_COUNT = 5;
+    PROFILE_INPUT_TRANSIENT_NEW_EDGE_RATIO = 6;
+    PROFILE_INPUT_TRANSIENT_CURRENT_VELOCITY = 7;
+    PROFILE_INPUT_TRANSIENT_ANY_BOOLEAN_TRUE = 8;
+    PROFILE_INPUT_CONSTANT = 9;
+    // Compares the request being scored against the actor's stored spend
+    // histogram or activity bitmap. Parameters live in `derived`.
+    PROFILE_INPUT_DERIVED = 10;
+}
+
+enum ProfileAggregation {
+    PROFILE_AGGREGATION_FIRST = 0;
+    PROFILE_AGGREGATION_SUM = 1;
+    PROFILE_AGGREGATION_MEAN = 2;
+    PROFILE_AGGREGATION_MAX = 3;
+    PROFILE_AGGREGATION_MIN = 4;
+}
+
+enum DerivedFeatureKind {
+    DERIVED_AMOUNT_BIN_INDEX = 0;
+    DERIVED_AMOUNT_BIN_SHARE = 1;
+    DERIVED_AMOUNT_BIN_IS_RARE = 2;
+    DERIVED_HISTOGRAM_RATE_RATIO = 3;
+    DERIVED_ACTIVITY_TICK_IS_ACTIVE = 4;
+    DERIVED_ACTIVITY_TICK_DENSITY = 5;
+    DERIVED_NEW_EDGE_ON_TYPE = 6;
+    DERIVED_PRODUCT = 7;
+}
+
+// Parameters for a derived profile input. Nested rather than flattened into
+// ProfileInputSpec so future derived families add fields here instead of
+// widening the shared input message.
+message DerivedFeatureSpec {
+    DerivedFeatureKind kind = 1;
+    string edge_type = 2;
+    // Node type whose stored history is compared against. Must be an endpoint
+    // of edge_type.
+    string actor_node_type = 3;
+    FeatureDirection direction = 4;
+    // Window for bin share, rarity, and tick density. Unused by
+    // DERIVED_AMOUNT_BIN_INDEX.
+    uint32 window_secs = 5;
+    // Numerator and denominator windows for DERIVED_HISTOGRAM_RATE_RATIO.
+    uint32 short_window_secs = 6;
+    uint32 long_window_secs = 7;
+    // Collapses several matching actors or edges in one request.
+    ProfileAggregation aggregation = 8;
+    // Factors for DERIVED_PRODUCT, naming inputs declared earlier in the same
+    // profile. Empty for every other kind.
+    string left_input = 9;
+    string right_input = 10;
+}
+
+message ProfileInputSpec {
+    string name = 1;
+    ProfileInputSourceKind source_kind = 2;
+    string node_type = 3;
+    uint32 historical_slot = 4;
+    ProfileAggregation aggregation = 5;
+    float constant_value = 6;
+    float weight = 7;
+    FeatureTransformKind transform = 8;
+    float transform_min = 9;
+    float transform_max = 10;
+    float transform_multiplier = 11;
+    float transform_offset = 12;
+    // Exact NodeFeatureSchema version required by historical inputs; zero binds
+    // to the current version when registering legacy clients.
+    uint32 node_schema_version = 13;
+    // Set only when source_kind is PROFILE_INPUT_DERIVED. An older binary
+    // ignores this field, so bump the profile version when introducing derived
+    // inputs to make a downgrade fail on version mismatch instead of scoring
+    // with silently missing inputs.
+    optional DerivedFeatureSpec derived = 14;
+}
+
+message LogisticModelSpec {
+    uint32 version = 1;
+    float bias = 2;
+    repeated float weights = 3;
+    float decision_threshold = 4;
+}
+
+message TransactionFeatureProfileSpec {
+    string name = 1;
+    uint32 version = 2;
+    repeated ProfileInputSpec inputs = 3;
+    LogisticModelSpec model = 4;
+}
+
+message FeatureConfigResponse {
+    uint32 version = 1;
+    // Advisory findings. Registration succeeded; these describe weights that
+    // would leave the risk score saturated and unable to rank cases.
+    repeated string warnings = 2;
+}
+
+message GetFeatureConfigurationRequest {}
+
+message GetFeatureConfigurationResponse {
+    repeated NodeFeatureSchemaSpec node_feature_schemas = 1;
+    repeated TransactionFeatureProfileSpec transaction_feature_profiles = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Feature suggestion
+//
+// Suggestion lives beside registration because both need the same legality
+// rules. Suggestions return the very specs the register RPCs accept, so a
+// caller reviews and registers without translating between shapes.
+// ---------------------------------------------------------------------------
+
+// Semantic role a node type plays. Role reweights which feature families win a
+// contested budget; it never changes what is legal.
+enum NodeRole {
+    NODE_ROLE_GENERIC = 0;
+    // The party being judged: CARD, MEMBER, ACCOUNT.
+    NODE_ROLE_ACTOR = 1;
+    // A thing an actor transacts with: TERMINAL, POLICY.
+    NODE_ROLE_INSTRUMENT = 2;
+    // The other side of the transaction: MERCHANT, PROVIDER.
+    NODE_ROLE_COUNTERPARTY = 3;
+    // An identifier several actors can share: DEVICE, IP.
+    NODE_ROLE_SHARED_IDENTIFIER = 4;
+    // A fraud record rather than a participant.
+    NODE_ROLE_CASE = 5;
+}
+
+// What a candidate measures. Roles reweight whole families.
+enum CandidateFamily {
+    CANDIDATE_FAMILY_FRAUD_PROXIMITY = 0;
+    CANDIDATE_FAMILY_TRUST = 1;
+    CANDIDATE_FAMILY_RECENCY = 2;
+    CANDIDATE_FAMILY_DIVERSITY = 3;
+    CANDIDATE_FAMILY_ACTIVE_STATE = 4;
+    CANDIDATE_FAMILY_VELOCITY = 5;
+    CANDIDATE_FAMILY_VOLUME = 6;
+    CANDIDATE_FAMILY_VALUE = 7;
+    CANDIDATE_FAMILY_PROPERTY = 8;
+    CANDIDATE_FAMILY_DERIVED = 9;
+}
+
+message SuggestNodeFeatureSchemaRequest {
+    string node_type = 1;
+    NodeRole role = 2;
+    // Slots to fill. Zero and anything above 32 use the full 32.
+    uint32 budget = 3;
+}
+
+// One legal candidate together with why it ranked where it did.
+message FeatureCandidate {
+    NodeFeatureSlotSpec slot = 1;
+    CandidateFamily family = 2;
+    // Lower is more useful.
+    uint32 tier = 3;
+    string rationale = 4;
+    bool selected = 5;
+    // Why a legal candidate was left out: "budget", "edge cap", or the slot
+    // that already answers the same question. Empty when selected.
+    string excluded_reason = 6;
+}
+
+// Legal metric/direction/window combinations for one edge type, so an editor can
+// offer only values the engine accepts.
+message LegalEdgeMetric {
+    EdgeFeatureMetric metric = 1;
+    FeatureDirection direction = 2;
+    repeated uint32 windows_secs = 3;
+    FeatureRetention retention = 4;
+}
+
+message LegalEdgeOptions {
+    string edge_type = 1;
+    repeated LegalEdgeMetric metrics = 2;
+}
+
+message SuggestNodeFeatureSchemaResponse {
+    // Selected slots, reindexed from zero. Returned disabled so the caller
+    // reviews it before it starts costing memory.
+    NodeFeatureSchemaSpec schema = 1;
+    // Every legal candidate, selected or not, in ranked order.
+    repeated FeatureCandidate candidates = 2;
+    repeated LegalEdgeOptions legal_options = 3;
+}
+
+message SuggestTransactionProfileRequest {
+    // Node types whose enabled feature schemas supply the historical inputs.
+    repeated string node_types = 1;
+    NodeRole role = 2;
+}
+
+message SuggestTransactionProfileResponse {
+    TransactionFeatureProfileSpec profile = 1;
 }
