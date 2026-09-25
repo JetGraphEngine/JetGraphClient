@@ -241,12 +241,32 @@ impl FeatureClient {
         reason: &str,
         rule_id: Option<&str>,
     ) -> Result<u64, ClientError> {
+        self.create_fraud_case_at(case_id, participants, fraud_score, reason, rule_id, None)
+            .await
+    }
+
+    /// [`Self::create_fraud_case`] with an explicit event time.
+    ///
+    /// `event_ts_secs` (epoch seconds) is when the case became known. It stamps
+    /// the participant->case edges that score-time case recency is read from,
+    /// so historical replays must pass the confirmation time here. `None` lets
+    /// the server use its own clock.
+    pub async fn create_fraud_case_at(
+        &mut self,
+        case_id: &str,
+        participants: &[NodeRef],
+        fraud_score: f32,
+        reason: &str,
+        rule_id: Option<&str>,
+        event_ts_secs: Option<u32>,
+    ) -> Result<u64, ClientError> {
         let req = features_proto::CreateFraudCaseRequest {
             case_id: case_id.to_string(),
             participants: participants.iter().map(|n| node_ref_to_proto(n)).collect(),
             fraud_score,
             reason: reason.to_string(),
             rule_id: rule_id.unwrap_or_default().to_string(),
+            event_ts_secs,
         };
         let r = self
             .client
@@ -296,10 +316,24 @@ impl FeatureClient {
         participants: &[NodeRef],
         fraud_score: f32,
     ) -> Result<(), ClientError> {
+        self.add_fraud_case_nodes_at(case_id, participants, fraud_score, None)
+            .await
+    }
+
+    /// [`Self::add_fraud_case_nodes`] with an explicit event time; see
+    /// [`Self::create_fraud_case_at`].
+    pub async fn add_fraud_case_nodes_at(
+        &mut self,
+        case_id: &str,
+        participants: &[NodeRef],
+        fraud_score: f32,
+        event_ts_secs: Option<u32>,
+    ) -> Result<(), ClientError> {
         let req = features_proto::AddFraudCaseNodesRequest {
             case_id: case_id.to_string(),
             participants: participants.iter().map(|n| node_ref_to_proto(n)).collect(),
             fraud_score,
+            event_ts_secs,
         };
         self.client
             .add_fraud_case_nodes(req)

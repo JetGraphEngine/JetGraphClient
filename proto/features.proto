@@ -149,6 +149,10 @@ message CreateFraudCaseRequest {
     // Identifier of the detection rule that fired. Kept apart from `reason` so a
     // training set can be stratified by rule without parsing analyst free text.
     string rule_id = 5;
+    // Event time (epoch seconds) at which the case became known. Stamps the
+    // participant->case edges that score-time case recency is read from.
+    // Omit for live traffic; supply it when replaying historical confirmations.
+    optional uint32 event_ts_secs = 6;
 }
 
 message CreateFraudCaseResponse {
@@ -159,6 +163,8 @@ message AddFraudCaseNodesRequest {
     string case_id = 1;
     repeated NodeRef participants = 2;
     float fraud_score = 3;
+    // See CreateFraudCaseRequest.event_ts_secs.
+    optional uint32 event_ts_secs = 4;
 }
 
 message AddFraudCaseNodesResponse {}

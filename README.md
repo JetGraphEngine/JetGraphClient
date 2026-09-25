@@ -2,7 +2,13 @@
 
 A standalone Rust library for connecting to **[JetGraph](https://jetgraph.io)** over gRPC. This crate vendors the `.proto` definitions under `proto/`, so it can be used independently — consumers only need Rust, `protoc` (for the build step), and a running JetGraph engine.
 
-JetGraph is a purpose-built, in-memory graph engine for real-time decisions across any domain: fraud detection, recommendation systems, network security, supply chain analytics, knowledge graphs, and more. The Rust client is the highest-performance way to connect to it, using a persistent gRPC connection with a typed, ergonomic API.
+**Official website:** [https://jetgraph.io](https://jetgraph.io)  
+**Documentation:** [https://jetgraph.io/docs/](https://jetgraph.io/docs/) · [Rust client guide](https://jetgraph.io/docs/rust-client/) · [Quick Start](https://jetgraph.io/docs/quick-start/)  
+**GitHub org:** [JetGraphEngine](https://github.com/JetGraphEngine)
+
+JetGraph is a purpose-built, in-memory graph engine for real-time graph intelligence and decisioning. Built in Rust, it is designed for latency-sensitive workloads such as fraud detection, risk scoring, anomaly detection, network security, recommendations, and entity relationship analysis. It is not a generic replacement for every graph-database workload.
+
+The Rust client is the highest-performance way to connect, using a persistent gRPC connection with a typed API.
 
 The engine implementation lives in the sibling [`Graph`](../Graph) repository.
 
