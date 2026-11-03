@@ -344,14 +344,15 @@ impl SegmentClient {
                 .await?;
 
             if let Some(s) = state {
-                if s.approx_sum > 0.0 {
+                let confidence = membership_confidence(s.approx_sum, s.tx_count);
+                if confidence > 0.0 {
                     let segment_name = edge
                         .neighbor_external_id
                         .unwrap_or_else(|| edge.neighbor_node_id.to_string());
                     memberships.push(SegmentMembership {
                         segment_name,
                         segment_node_id: edge.neighbor_node_id,
-                        confidence: s.approx_sum,
+                        confidence,
                         last_seen_secs: s.last_seen,
                     });
                 }
@@ -398,7 +399,7 @@ impl SegmentClient {
                 )
                 .await?;
             let (confidence, last_seen_secs) = state
-                .map(|s| (s.approx_sum, s.last_seen))
+                .map(|s| (membership_confidence(s.approx_sum, s.tx_count), s.last_seen))
                 .unwrap_or((0.0, 0));
             if confidence > 0.0 {
                 members.push(SegmentMember {
@@ -444,6 +445,19 @@ impl SegmentClient {
 // ---------------------------------------------------------------------------
 // Helpers for callers working with raw neighbor edge lists
 // ---------------------------------------------------------------------------
+
+/// Slim `MEMBER_OF` edges (the schema's subscriber→segment link) keep `tx_count`
+/// and leave `approx_sum` at 0 because they have no numeric property. Those are
+/// still memberships. Static evaluator edges store confidence in `approx_sum`.
+fn membership_confidence(approx_sum: f32, tx_count: u32) -> f32 {
+    if approx_sum > 0.0 {
+        approx_sum
+    } else if tx_count > 0 {
+        1.0
+    } else {
+        0.0
+    }
+}
 
 /// Extract segment name from a MEMBER_OF neighbor edge (uses external_id if present).
 pub fn segment_name_from_edge(edge: &NeighborEdge) -> String {
