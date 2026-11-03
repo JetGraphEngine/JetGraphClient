@@ -34,6 +34,20 @@ impl SchemaClient {
         name: &str,
         numeric_ids: bool,
     ) -> Result<u32, ClientError> {
+        self.register_node_type_with_notes(name, numeric_ids, "", "")
+            .await
+    }
+
+    /// Register a node type together with its description and business meaning.
+    ///
+    /// Empty notes are not stored. Later edits use the same fields on [`Self::get_schema`].
+    pub async fn register_node_type_with_notes(
+        &mut self,
+        name: &str,
+        numeric_ids: bool,
+        description: &str,
+        business_meaning: &str,
+    ) -> Result<u32, ClientError> {
         let ext_id_kind = if numeric_ids {
             schema_proto::ExternalIdKind::Numeric as i32
         } else {
@@ -42,6 +56,8 @@ impl SchemaClient {
         let req = schema_proto::NodeTypeSpec {
             name: name.to_string(),
             ext_id_kind,
+            description: description.to_string(),
+            business_meaning: business_meaning.to_string(),
         };
         let r = self
             .client
@@ -70,6 +86,38 @@ impl SchemaClient {
         activity_tick_size_secs: u64,
         bool_property_name: Option<&str>,
         symmetric: bool,
+    ) -> Result<u32, ClientError> {
+        self.register_compact_edge_type_with_notes(
+            name,
+            from_node_type,
+            to_node_type,
+            state_ttl_secs,
+            bin_boundaries,
+            tracked_property,
+            activity_tick_size_secs,
+            bool_property_name,
+            symmetric,
+            "",
+            "",
+        )
+        .await
+    }
+
+    /// Register a compact edge type together with its description and business meaning.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn register_compact_edge_type_with_notes(
+        &mut self,
+        name: &str,
+        from_node_type: &str,
+        to_node_type: &str,
+        state_ttl_secs: u64,
+        bin_boundaries: Vec<f32>,
+        tracked_property: &str,
+        activity_tick_size_secs: u64,
+        bool_property_name: Option<&str>,
+        symmetric: bool,
+        description: &str,
+        business_meaning: &str,
     ) -> Result<u32, ClientError> {
         let field_schema = if !bin_boundaries.is_empty() {
             Some(schema_proto::CompactFieldSchema {
@@ -102,6 +150,8 @@ impl SchemaClient {
             minimal_payload: false,
             bool_property: bool_property_name.unwrap_or("").to_string(),
             symmetric,
+            description: description.to_string(),
+            business_meaning: business_meaning.to_string(),
         };
         let r = self
             .client
@@ -149,6 +199,29 @@ impl SchemaClient {
         state_ttl_secs: u64,
         symmetric: bool,
     ) -> Result<u32, ClientError> {
+        self.register_static_edge_type_with_notes(
+            name,
+            from_node_type,
+            to_node_type,
+            state_ttl_secs,
+            symmetric,
+            "",
+            "",
+        )
+        .await
+    }
+
+    /// Register a static edge type together with its description and business meaning.
+    pub async fn register_static_edge_type_with_notes(
+        &mut self,
+        name: &str,
+        from_node_type: &str,
+        to_node_type: &str,
+        state_ttl_secs: u64,
+        symmetric: bool,
+        description: &str,
+        business_meaning: &str,
+    ) -> Result<u32, ClientError> {
         let req = schema_proto::CompactEdgeTypeSpec {
             name: name.to_string(),
             from_node_type: from_node_type.to_string(),
@@ -162,6 +235,8 @@ impl SchemaClient {
             minimal_payload: true,
             bool_property: String::new(), // static edge types cannot have a bool property
             symmetric,
+            description: description.to_string(),
+            business_meaning: business_meaning.to_string(),
         };
         let r = self
             .client
@@ -324,7 +399,7 @@ impl SchemaClient {
         Ok(r.into_inner().schema_version)
     }
 
-    /// Get the current schema.
+    /// Get the current schema, including each type's description and business meaning.
     pub async fn get_schema(&mut self) -> Result<GetSchemaResult, ClientError> {
         let req = schema_proto::GetSchemaRequest {};
         let r = self
@@ -344,6 +419,8 @@ impl SchemaClient {
                     id: n.id,
                     name: n.name,
                     numeric_ids: n.ext_id_kind != schema_proto::ExternalIdKind::String as i32,
+                    description: n.description,
+                    business_meaning: n.business_meaning,
                 })
                 .collect(),
             edge_types: inner
@@ -362,6 +439,8 @@ impl SchemaClient {
                         Some(e.bool_property)
                     },
                     is_symmetric: e.is_symmetric,
+                    description: e.description,
+                    business_meaning: e.business_meaning,
                 })
                 .collect(),
         })
@@ -384,6 +463,10 @@ pub struct NodeTypeInfo {
     /// True when external IDs for this node type are stored as `u64` (numeric).
     /// False when stored as `Arc<str>` (string).
     pub numeric_ids: bool,
+    /// Plain-language description. Empty when none was written.
+    pub description: String,
+    /// Why this type exists in the business. Empty when none was written.
+    pub business_meaning: String,
 }
 
 #[derive(Debug, Clone)]
@@ -401,6 +484,10 @@ pub struct EdgeTypeInfo {
     /// True when the edge type was registered as symmetric (undirected).
     /// Upserts normalize to (min(src,dst), max(src,dst)) and queries return out ∪ in.
     pub is_symmetric: bool,
+    /// Plain-language description. Empty when none was written.
+    pub description: String,
+    /// Why this relationship exists in the business. Empty when none was written.
+    pub business_meaning: String,
 }
 
 /// Result returned by [`SchemaClient::remove_edge_type`].

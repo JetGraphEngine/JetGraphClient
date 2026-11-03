@@ -33,6 +33,11 @@ message NodeTypeSpec {
     string         name       = 1;
     // Omitting this field defaults to NUMERIC (the proto3 zero value).
     ExternalIdKind ext_id_kind = 2;
+    // Plain-language description. Empty leaves any existing note unchanged only
+    // when both this and business_meaning are empty; otherwise both are stored.
+    string         description = 3;
+    // Why this type exists in the business.
+    string         business_meaning = 4;
 }
 
 // Compact edge type (uses UpsertEdge, one payload per unique pair).
@@ -71,6 +76,11 @@ message CompactEdgeTypeSpec {
     // storing one canonical payload row per pair. Neighbor queries return out ∪ in neighbors.
     // Requires from_node_type == to_node_type. Defaults to false.
     bool symmetric = 11;
+
+    // Plain-language description. Empty together with business_meaning stores nothing.
+    string description = 12;
+    // Why this relationship exists in the business.
+    string business_meaning = 13;
 }
 
 message ActivityBitmapConfig {
@@ -115,6 +125,10 @@ message NodeTypeInfo {
     uint32         id         = 1;
     string         name       = 2;
     ExternalIdKind ext_id_kind = 3;
+    // Plain-language description. Empty when none was written.
+    string         description = 4;
+    // Why this type exists in the business. Empty when none was written.
+    string         business_meaning = 5;
 }
 
 message EdgeTypeInfo {
@@ -129,6 +143,10 @@ message EdgeTypeInfo {
     string bool_property  = 7;
     // True when this edge type was registered as symmetric (undirected).
     bool is_symmetric     = 8;
+    // Plain-language description. Empty when none was written.
+    string description    = 9;
+    // Why this relationship exists in the business. Empty when none was written.
+    string business_meaning = 10;
 }
 
 message PropertyInfo {
