@@ -12,4 +12,8 @@ pub enum ClientError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// The segment evaluator rejected a signal or segment config call.
+    #[error("segment config API {status}: {message}")]
+    SegmentConfig { status: u16, message: String },
 }

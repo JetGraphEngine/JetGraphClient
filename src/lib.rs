@@ -98,6 +98,7 @@ pub mod graph;
 pub mod health;
 pub mod schema;
 pub mod segment;
+pub mod segment_config;
 pub mod types;
 
 pub use error::ClientError;
@@ -118,6 +119,10 @@ pub use schema::{
     EdgeTypeInfo, GetSchemaResult, MemoryUsage, NodeTypeInfo, RemoveEdgeTypeResult, SchemaClient,
 };
 pub use segment::{segment_name_from_edge, EvalContextData, SegmentClient};
+pub use segment_config::{
+    ConditionOp, EvalMode, SegmentCondition, SegmentConfigClient, SegmentDefinition, SegmentLogic,
+    SignalDefinition, SignalValueKind,
+};
 pub use types::EdgeTypeWeight;
 pub use types::*;
 
@@ -195,6 +200,9 @@ impl Client {
     }
 
     /// Segment operations: prefetch eval context, signal helpers, MEMBER_OF membership.
+    ///
+    /// Signal and segment *definitions* are stored by the segment evaluator, not
+    /// the graph engine. Use [`SegmentConfigClient`] for those.
     pub fn segment(&self) -> SegmentClient {
         SegmentClient::new(self.channel.clone())
     }
