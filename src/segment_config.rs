@@ -370,7 +370,12 @@ mod tests {
             modes: vec![EvalMode::Realtime],
             conditions: vec![SegmentCondition {
                 threshold_max: Some(1.0),
-                ..SegmentCondition::new("churn_score", ConditionOp::Between, 0.75, "Churn score {value}")
+                ..SegmentCondition::new(
+                    "churn_score",
+                    ConditionOp::Between,
+                    0.75,
+                    "Churn score {value}",
+                )
             }],
         };
         let json = serde_json::to_value(&segment).unwrap();
@@ -411,14 +416,22 @@ mod tests {
         updated.time_sensitive = true;
         client.update_signal(&updated).await.unwrap();
         let signals = client.list_signals().await.unwrap();
-        let stored = signals.iter().find(|item| item.name == signal_name).unwrap();
+        let stored = signals
+            .iter()
+            .find(|item| item.name == signal_name)
+            .unwrap();
         assert!(stored.time_sensitive);
 
         let segment = SegmentDefinition {
             name: segment_name.into(),
             label: "Client probe".into(),
             entity_type: "SUBSCRIBER".into(),
-            conditions: vec![SegmentCondition::new(signal_name, ConditionOp::Eq, 1.0, "probe")],
+            conditions: vec![SegmentCondition::new(
+                signal_name,
+                ConditionOp::Eq,
+                1.0,
+                "probe",
+            )],
             ..SegmentDefinition::default()
         };
         client.create_segment(&segment).await.unwrap();
@@ -426,7 +439,10 @@ mod tests {
         renamed_label.label = "Client probe updated".into();
         client.update_segment(&renamed_label).await.unwrap();
         let segments = client.list_segments().await.unwrap();
-        let stored = segments.iter().find(|item| item.name == segment_name).unwrap();
+        let stored = segments
+            .iter()
+            .find(|item| item.name == segment_name)
+            .unwrap();
         assert_eq!(stored.label, "Client probe updated");
 
         client.delete_segment(segment_name).await.unwrap();
