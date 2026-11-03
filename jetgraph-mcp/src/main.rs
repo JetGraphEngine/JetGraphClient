@@ -25,11 +25,16 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 const INSTRUCTIONS: &str = "\
-Read get_schema before naming a node type or an edge type. Map the words in the question through each type's description and business_meaning.\n\
+Read get_schema before naming a node type or an edge type. Map the words in the question through each type's description and business_meaning, and note each edge type's direction (from -> to) and activity_tick_secs.\n\
 \n\
 Write the hypothesis as measurements: get_neighbors, get_neighbor_count, get_last_neighbor, get_edge_state, get_histogram, get_feature_vector, find_similar, or a capped read-only cypher_read. Use the same edge type and window on every node you compare.\n\
 \n\
-Try those measurements on a sample before create_signal. create_signal and create_segment change evaluator configuration only. list_segment_members returns customers the evaluator has already linked. Include the definition you used — types, window, and score — in the answer.\n\
+Time-windowed behavior lives in two places that answer different questions:\n\
+- Node histogram (get_histogram): one actor's total event velocity and 8-bin amount distribution across all counterparties on an edge type. Pass window_hours OR window_days (never both). Compare a short window (e.g. window_hours: 24) against a longer baseline (e.g. window_days: 7 or 30) on the same node to spot acceleration, cooling, or churn.\n\
+- Pair activity bitmap (get_edge_state): one (src, dst) pair's relationship state. found: false means a first-time interaction. tx_count, approx_sum, and last_seen_secs summarize the pair's lifetime. Pass up to 4 windows in activity_windows_secs (e.g. [3600, 86400]) to read recent event counts from the 21-tick sliding bitmap. Its horizon is 21 * activity_tick_secs from get_schema; use get_histogram for longer windows.\n\
+- Read them together: high node get_histogram with low pair activity_counts means activity is spread across many counterparties; similar numbers mean activity is concentrated on that pair. In get_feature_vector, activity_tick_count counts distinct active ticks rather than events — compare it with total_events to separate a single-tick burst from steady activity.\n\
+\n\
+Try those measurements on a sample before create_signal. Build time-window signals with CALL graph.histogram($node, 'EDGE', hours, days) YIELD total_events RETURN total_events AS value (pair-level get_edge_state requires a destination node and cannot be compiled into a signal). create_signal and create_segment change evaluator configuration only. list_segment_members returns customers the evaluator has already linked. Include the definition you used — types, window, and score — in the answer.\n\
 \n\
 find_similar is shared-neighbor overlap and does not write edges. This server does not ingest data, delete types, or build a similarity graph.";
 
