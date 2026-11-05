@@ -935,11 +935,104 @@ fn empty_as_none(value: &str) -> Option<&str> {
     }
 }
 
+fn build_http_router(
+    server: Jetgraph,
+    cancellation_token: tokio_util::sync::CancellationToken,
+) -> axum::Router {
+    use axum::{routing::get, Json};
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+    };
+
+    let mut cfg = StreamableHttpServerConfig::default()
+        .with_cancellation_token(cancellation_token)
+        .disable_allowed_hosts();
+
+    if let Ok(hosts) = std::env::var("JETGRAPH_MCP_ALLOWED_HOSTS") {
+        let parsed: Vec<String> = hosts
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        if !parsed.is_empty() {
+            cfg = cfg.with_allowed_hosts(parsed);
+        }
+    }
+
+    let s1 = server.clone();
+    let mcp_service: StreamableHttpService<Jetgraph, LocalSessionManager> =
+        StreamableHttpService::new(move || Ok(s1.clone()), Default::default(), cfg.clone());
+
+    let s2 = server;
+    let api_mcp_service: StreamableHttpService<Jetgraph, LocalSessionManager> =
+        StreamableHttpService::new(move || Ok(s2.clone()), Default::default(), cfg);
+
+    axum::Router::new()
+        .route(
+            "/health",
+            get(|| async {
+                Json(json!({
+                    "status": "ok",
+                    "service": "jetgraph-mcp",
+                    "transport": "streamable-http",
+                    "mcp_path": "/mcp",
+                }))
+            }),
+        )
+        .nest_service("/mcp", mcp_service)
+        .nest_service("/api/mcp", api_mcp_service)
+}
+
+fn parse_listen_addr() -> Option<String> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--listen" || arg == "-l" {
+            if let Some(val) = args.next() {
+                if !val.trim().is_empty() {
+                    return Some(val);
+                }
+            }
+        } else if let Some(val) = arg.strip_prefix("--listen=") {
+            if !val.trim().is_empty() {
+                return Some(val.to_string());
+            }
+        } else if arg == "--http" {
+            return Some("0.0.0.0:8090".to_string());
+        }
+    }
+    for var in ["JETGRAPH_MCP_ADDR", "MCP_LISTEN_ADDR"] {
+        if let Ok(val) = std::env::var(var) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let server = Jetgraph::from_env().map_err(|error| {
         anyhow::anyhow!("jetgraph-mcp could not read its configuration: {error}")
     })?;
+    if let Some(listen_addr) = parse_listen_addr() {
+        let listener = tokio::net::TcpListener::bind(&listen_addr)
+            .await
+            .map_err(|e| anyhow::anyhow!("jetgraph-mcp could not bind {listen_addr}: {e}"))?;
+        let local_addr = listener.local_addr()?;
+        eprintln!("jetgraph-mcp Streamable HTTP listening on http://{local_addr}/mcp");
+        let ct = tokio_util::sync::CancellationToken::new();
+        let router = build_http_router(server, ct.child_token());
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                let _ = tokio::signal::ctrl_c().await;
+                ct.cancel();
+            })
+            .await?;
+        return Ok(());
+    }
     let running = server.serve(rmcp::transport::stdio()).await?;
     running.waiting().await?;
     Ok(())
@@ -1010,6 +1103,54 @@ mod handshake {
 
         client.cancel().await?;
         server_task.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn serves_mcp_over_streamable_http_url() -> anyhow::Result<()> {
+        use rmcp::transport::{
+            streamable_http_client::StreamableHttpClientTransportConfig,
+            StreamableHttpClientTransport,
+        };
+
+        let ct = tokio_util::sync::CancellationToken::new();
+        let server = Jetgraph::from_env()?;
+        let router = super::build_http_router(server, ct.child_token());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+
+        let server_task = tokio::spawn({
+            let ct = ct.clone();
+            async move {
+                let _ = axum::serve(listener, router)
+                    .with_graceful_shutdown(async move { ct.cancelled_owned().await })
+                    .await;
+            }
+        });
+
+        let health: serde_json::Value = reqwest::get(format!("http://{addr}/health"))
+            .await?
+            .json()
+            .await?;
+        assert_eq!(health.get("status").and_then(|v| v.as_str()), Some("ok"));
+        assert_eq!(
+            health.get("mcp_path").and_then(|v| v.as_str()),
+            Some("/mcp")
+        );
+
+        let transport = StreamableHttpClientTransport::from_config(
+            StreamableHttpClientTransportConfig::with_uri(format!("http://{addr}/mcp")),
+        );
+        let client = NopClient.serve(transport).await?;
+        let tools = client.list_tools(None::<PaginatedRequestParams>).await?;
+        let names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
+        assert!(names.contains(&"get_schema"));
+        assert!(names.contains(&"create_signal"));
+        assert!(names.contains(&"create_segment"));
+
+        client.cancel().await?;
+        ct.cancel();
+        let _ = server_task.await;
         Ok(())
     }
 

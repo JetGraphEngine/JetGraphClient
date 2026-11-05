@@ -13,12 +13,14 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+axum = "0.7"
 jetgraph-client = { path = ".." }
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
-rmcp = { version = "3.8", features = ["server", "transport-io"] }
+rmcp = { version = "3.8", features = ["server", "transport-io", "transport-streamable-http-server"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "time"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "io-std", "signal", "time"] }
+tokio-util = "0.7"
 
 [dev-dependencies]
-rmcp = { version = "3.8", features = ["client"] }
+rmcp = { version = "3.8", features = ["client", "transport-streamable-http-client-reqwest", "reqwest-native-tls"] }
