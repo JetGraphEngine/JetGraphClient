@@ -1,2 +1,18 @@
-/target
+# Rust / Cargo build outputs (root and subcrates like jetgraph-mcp/target/)
+target/
+**/target/
+
+# Backup & temporary files
 **/*.rs.bk
+*.swp
+*.swo
+*~
+
+# macOS / OS metadata
+.DS_Store
+
+# IDE / local environment
+.idea/
+.vscode/
+.env
+.env.*
