@@ -1,5 +1,0 @@
-cargo:rerun-if-changed=/Users/canalhas/development/FraudManagement/RustGraphClient/proto/health.proto
-cargo:rerun-if-changed=/Users/canalhas/development/FraudManagement/RustGraphClient/proto/schema.proto
-cargo:rerun-if-changed=/Users/canalhas/development/FraudManagement/RustGraphClient/proto/graph.proto
-cargo:rerun-if-changed=/Users/canalhas/development/FraudManagement/RustGraphClient/proto/features.proto
-cargo:rerun-if-changed=/Users/canalhas/development/FraudManagement/RustGraphClient/proto
