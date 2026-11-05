@@ -298,3 +298,11 @@ Verify there is no drift between the two copies:
 ```bash
 diff -rq ../Graph/proto proto
 ```
+
+
+#RustGraphClient/jetgraph-mcp also now supports --listen (or JETGRAPH_MCP_ADDR) in #addition to stdio, if you ever want to run the MCP server on a separate port or host:
+
+JETGRAPH_GRPC_URL=http://192.168.1.125:50051 \
+JETGRAPH_HTTP_URL=http://192.168.1.125:8080 \
+JETGRAPH_SEGMENTS_URL=http://192.168.1.125:8081 \
+cargo run --release --manifest-path RustGraphClient/jetgraph-mcp/Cargo.toml -- --listen 0.0.0.0:8090
