@@ -116,7 +116,8 @@ pub use schema::schema_proto::{
     ProfileInputSpec, TransactionFeatureProfileSpec,
 };
 pub use schema::{
-    EdgeTypeInfo, GetSchemaResult, MemoryUsage, NodeTypeInfo, RemoveEdgeTypeResult, SchemaClient,
+    EdgeHistogramInfo, EdgeTypeInfo, GetSchemaResult, MemoryUsage, NodeTypeInfo, PropertyInfo,
+    RemoveEdgeTypeResult, SchemaClient,
 };
 pub use segment::{segment_name_from_edge, EvalContextData, SegmentClient};
 pub use segment_config::{

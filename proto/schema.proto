@@ -147,6 +147,12 @@ message EdgeTypeInfo {
     string description    = 9;
     // Why this relationship exists in the business. Empty when none was written.
     string business_meaning = 10;
+    // Optional numeric field schema (8-bin boundaries + tracked property name).
+    optional CompactFieldSchema field_schema = 11;
+    // Optional per-node timed histogram ring configuration.
+    optional NodeHistogramConfig node_histogram = 12;
+    // True when registered with minimal_payload = true (8-byte static edge).
+    bool minimal_payload = 13;
 }
 
 message PropertyInfo {

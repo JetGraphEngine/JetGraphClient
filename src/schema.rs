@@ -412,6 +412,17 @@ impl SchemaClient {
             schema_version: inner.schema_version,
             node_feature_schemas: inner.node_feature_schemas,
             transaction_feature_profiles: inner.transaction_feature_profiles,
+            properties: inner
+                .properties
+                .into_iter()
+                .map(|p| PropertyInfo {
+                    name: p.name,
+                    owner_type_name: p.owner_type_name,
+                    owner_is_node: p.owner_is_node,
+                    value_type: schema_proto::ValueType::try_from(p.value_type)
+                        .unwrap_or(schema_proto::ValueType::String),
+                })
+                .collect(),
             node_types: inner
                 .node_types
                 .into_iter()
@@ -426,21 +437,44 @@ impl SchemaClient {
             edge_types: inner
                 .edge_types
                 .into_iter()
-                .map(|e| EdgeTypeInfo {
-                    id: e.id,
-                    name: e.name,
-                    from_node_type: e.from_node_type,
-                    to_node_type: e.to_node_type,
-                    state_ttl_secs: e.state_ttl_secs,
-                    tick_size_secs: e.tick_size_secs,
-                    bool_property: if e.bool_property.is_empty() {
-                        None
-                    } else {
-                        Some(e.bool_property)
-                    },
-                    is_symmetric: e.is_symmetric,
-                    description: e.description,
-                    business_meaning: e.business_meaning,
+                .map(|e| {
+                    let (bin_boundaries, tracked_property) = match e.field_schema {
+                        Some(fs) => (
+                            fs.bin_boundaries,
+                            if fs.tracked_property.is_empty() {
+                                None
+                            } else {
+                                Some(fs.tracked_property)
+                            },
+                        ),
+                        None => (Vec::new(), None),
+                    };
+                    let node_histogram = e.node_histogram.map(|h| EdgeHistogramInfo {
+                        enabled_for_src: h.enabled_for_src,
+                        enabled_for_dst: h.enabled_for_dst,
+                        hourly_slots: h.hourly_slots,
+                        daily_slots: h.daily_slots,
+                    });
+                    EdgeTypeInfo {
+                        id: e.id,
+                        name: e.name,
+                        from_node_type: e.from_node_type,
+                        to_node_type: e.to_node_type,
+                        state_ttl_secs: e.state_ttl_secs,
+                        tick_size_secs: e.tick_size_secs,
+                        bool_property: if e.bool_property.is_empty() {
+                            None
+                        } else {
+                            Some(e.bool_property)
+                        },
+                        is_symmetric: e.is_symmetric,
+                        description: e.description,
+                        business_meaning: e.business_meaning,
+                        minimal_payload: e.minimal_payload,
+                        bin_boundaries,
+                        tracked_property,
+                        node_histogram,
+                    }
                 })
                 .collect(),
         })
@@ -452,8 +486,25 @@ pub struct GetSchemaResult {
     pub schema_version: u32,
     pub node_types: Vec<NodeTypeInfo>,
     pub edge_types: Vec<EdgeTypeInfo>,
+    pub properties: Vec<PropertyInfo>,
     pub node_feature_schemas: Vec<schema_proto::NodeFeatureSchemaSpec>,
     pub transaction_feature_profiles: Vec<schema_proto::TransactionFeatureProfileSpec>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PropertyInfo {
+    pub name: String,
+    pub owner_type_name: String,
+    pub owner_is_node: bool,
+    pub value_type: schema_proto::ValueType,
+}
+
+#[derive(Debug, Clone)]
+pub struct EdgeHistogramInfo {
+    pub enabled_for_src: bool,
+    pub enabled_for_dst: bool,
+    pub hourly_slots: u32,
+    pub daily_slots: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -488,6 +539,14 @@ pub struct EdgeTypeInfo {
     pub description: String,
     /// Why this relationship exists in the business. Empty when none was written.
     pub business_meaning: String,
+    /// True when registered with `minimal_payload = true` (8-byte static edge).
+    pub minimal_payload: bool,
+    /// 7 numeric bin thresholds defining the 8 value buckets (empty when no numeric field schema).
+    pub bin_boundaries: Vec<f32>,
+    /// Name of the numeric property driving bin assignment (e.g. `"amount"`).
+    pub tracked_property: Option<String>,
+    /// Per-node timed histogram ring configuration when enabled for this edge type.
+    pub node_histogram: Option<EdgeHistogramInfo>,
 }
 
 /// Result returned by [`SchemaClient::remove_edge_type`].

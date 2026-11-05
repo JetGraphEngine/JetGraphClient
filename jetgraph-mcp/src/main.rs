@@ -25,18 +25,39 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 const INSTRUCTIONS: &str = "\
-Read get_schema before naming a node type or an edge type. Map the words in the question through each type's description and business_meaning, and note each edge type's direction (from -> to) and activity_tick_secs.\n\
+1. Schema & Properties (get_schema)\n\
+Always call get_schema first before naming a node type, edge type, or property. Map the words in the user's question through each type's description and business_meaning.\n\
+- Each node_type includes: name, external_id kind ('string' or 'numeric'), description, business_meaning, and registered properties ([{name, value_type}] where value_type is int | float | string | bool | timestamp).\n\
+- Each edge_type includes: name, direction (from -> to), description, business_meaning, symmetric, minimal_payload, state_ttl_secs, activity_tick_secs, activity_horizon_secs, bool_property, tracked_property, bin_boundaries, and node_histogram.\n\
 \n\
-Write the hypothesis as measurements: get_neighbors, get_neighbor_count, get_last_neighbor, get_edge_state, get_histogram, get_feature_vector, find_similar, or a capped read-only cypher_read. Use the same edge type and window on every node you compare.\n\
+2. Compact Edge Structure (1 edge per (src, dst) pair)\n\
+JetGraph does NOT store one edge per event/transaction. Every (src, dst) pair on an edge type is a single in-memory compact record updated in place:\n\
+- Compact edges (minimal_payload: false): store tx_count (lifetime event count), approx_sum (accumulated numeric value such as spend/amount), last_seen (latest event unix timestamp in seconds), optional bool_property, 8 value bins, and a 21-tick sliding activity bitmap.\n\
+- Static edges (minimal_payload: true, e.g. MEMBER_OF, SIMILAR_TO): store only approx_sum (score/confidence) and last_seen (tx_count is 1; no bitmap or bins).\n\
+- Inspect one pair with get_edge_state, or in Cypher via r.tx_count, r.approx_sum, and r.last_seen on [r:EDGE_TYPE].\n\
 \n\
-Time-windowed behavior lives in two places that answer different questions:\n\
-- Node histogram (get_histogram): one actor's total event velocity and 8-bin amount distribution across all counterparties on an edge type. Pass window_hours OR window_days (never both). Compare a short window (e.g. window_hours: 24) against a longer baseline (e.g. window_days: 7 or 30) on the same node to spot acceleration, cooling, or churn.\n\
-- Pair activity bitmap (get_edge_state): one (src, dst) pair's relationship state. found: false means a first-time interaction. tx_count, approx_sum, and last_seen_secs summarize the pair's lifetime. Pass up to 4 windows in activity_windows_secs (e.g. [3600, 86400]) to read recent event counts from the 21-tick sliding bitmap. Its horizon is 21 * activity_tick_secs from get_schema; use get_histogram for longer windows.\n\
-- Read them together: high node get_histogram with low pair activity_counts means activity is spread across many counterparties; similar numbers mean activity is concentrated on that pair. In get_feature_vector, activity_tick_count counts distinct active ticks rather than events — compare it with total_events to separate a single-tick burst from steady activity.\n\
+3. Time-Windowed Behavior: Node Histogram vs. Pair Activity Bitmap\n\
+- Node histogram (get_histogram): one actor's total event velocity and 8-bin value distribution across ALL counterparties on an edge type (when node_histogram is enabled). Pass window_hours OR window_days (never both). Returns total_events, bin_counts (8 buckets defined by the edge type's 7 bin_boundaries: bin 0 < b[0], ..., bin 7 >= b[6]), and window_covered_secs. Compare a short window (e.g. window_hours: 24) against a longer baseline (e.g. window_days: 7 or 30) on the same node to spot acceleration, cooling, or churn.\n\
+- Pair activity bitmap (get_edge_state): one (src, dst) pair's relationship state. found: false means a first-time interaction (novelty). Pass up to 4 windows in activity_windows_secs (e.g. [3600, 86400]) to read recent event counts on that pair from the 21-tick sliding bitmap. Its horizon is activity_horizon_secs (21 * activity_tick_secs); use get_histogram for longer windows.\n\
+- Read them together: high node get_histogram with low pair activity_counts means activity is spread across many counterparties; similar numbers mean activity is concentrated on that single counterparty.\n\
 \n\
-Try those measurements on a sample before create_signal. Build time-window signals with CALL graph.histogram($node, 'EDGE', hours, days) YIELD total_events RETURN total_events AS value (pair-level get_edge_state requires a destination node and cannot be compiled into a signal). create_signal and create_segment change evaluator configuration only. list_segment_members returns customers the evaluator has already linked. Include the definition you used — types, window, and score — in the answer.\n\
+4. Stored 32-Slot Feature Vector (get_feature_vector)\n\
+Returns the pre-accumulated 32-slot behavioral fingerprint for a node (slots listed in get_schema.feature_schemas), with raw, effective (after transform, weight, and fallback), support (evidence count), used_fallback, confidence, and age_secs. Note that activity_tick_count counts distinct active time ticks (regularity), whereas event_count / histogram_count counts total events (volume) — compare them to separate a single-tick burst from steady activity.\n\
 \n\
-find_similar is shared-neighbor overlap and does not write edges. This server does not ingest data, delete types, or build a similarity graph.";
+5. Querying & Cypher Rules (get_neighbors, find_similar, cypher_read)\n\
+- Prefer get_neighbors, get_neighbor_count, get_last_neighbor, get_edge_state, get_histogram, get_feature_vector, and find_similar for point and neighborhood reads. Use the same edge_type and window on every node you compare.\n\
+- find_similar computes weighted shared-neighbor Jaccard overlap across edge_weights (k <= 25) and does not write SIMILAR_TO edges.\n\
+- Use cypher_read for multi-hop paths (e.g. NEXT_MERCHANT / NEXT_SEGMENT / NEXT_OFFER_TOUCH), property filtering, or rankings. Always anchor Cypher on a node label and filter (e.g. MATCH (n:Customer {external_id: 'CUST-00001'})-[r:HOLDS]->(c:Card)) to avoid full-graph scans. Supported read clauses: MATCH, OPTIONAL MATCH, WHERE, WITH, UNWIND, RETURN, ORDER BY, LIMIT (<= 100), and CALL graph.* (graph.histogram, graph.lastNeighbor, graph.neighborCount, graph.edgeState, graph.segmentContext, graph.findSimilar).\n\
+\n\
+6. Signals & Segments (create_signal, create_segment, list_segment_members)\n\
+- Test measurements on a sample before calling create_signal.\n\
+- create_signal stores a read-only Cypher query that binds $node (internal node ID) and returns one column named value (value_kind: 'number' or 'epoch_secs'):\n\
+  * Node property: MATCH (n) WHERE id(n) = $node RETURN n.prop_name AS value\n\
+  * Histogram window: CALL graph.histogram($node, 'EDGE', hours_or_null, days_or_null) YIELD total_events RETURN total_events AS value\n\
+  * Neighbor count: CALL graph.neighborCount($node, 'EDGE') YIELD count RETURN count AS value\n\
+  * Recency (value_kind: 'epoch_secs'): CALL graph.lastNeighbor($node, 'EDGE') YIELD last_seen_secs RETURN last_seen_secs AS value\n\
+  (Pair-level get_edge_state requires a destination node and cannot be compiled into a signal.)\n\
+- create_segment and create_signal change evaluator configuration only. list_segment_members returns customers the evaluator has already linked. Always include the exact definition you used — types, properties, windows, thresholds, and scores — in the final answer.";
 
 const DEFAULT_PAGE: u32 = 25;
 const MAX_PAGE: u32 = 100;
@@ -231,7 +252,7 @@ fn default_logic() -> String {
 #[tool_router]
 impl Jetgraph {
     #[tool(
-        description = "Live schema: node types, edge types, descriptions, business meanings, and stored feature-vector slots. Call this before using a type name."
+        description = "Live schema: node types (with registered properties), edge types (with compact payload, histogram, bin boundaries, and activity bitmap settings), descriptions, business meanings, and stored feature-vector slots. Call this before using a type or property name."
     )]
     async fn get_schema(&self) -> CallToolResult {
         let mut schema_client = self.graph.schema();
@@ -243,11 +264,30 @@ impl Jetgraph {
             .node_types
             .iter()
             .map(|node| {
+                let mut props: Vec<Value> = schema
+                    .properties
+                    .iter()
+                    .filter(|p| {
+                        p.owner_is_node && p.owner_type_name.eq_ignore_ascii_case(&node.name)
+                    })
+                    .map(|p| {
+                        json!({
+                            "name": p.name,
+                            "value_type": value_type_label(p.value_type),
+                        })
+                    })
+                    .collect();
+                props.sort_by(|a, b| {
+                    a.get("name")
+                        .and_then(Value::as_str)
+                        .cmp(&b.get("name").and_then(Value::as_str))
+                });
                 json!({
                     "name": node.name,
                     "description": node.description,
                     "business_meaning": node.business_meaning,
                     "external_id": if node.numeric_ids { "numeric" } else { "string" },
+                    "properties": props,
                 })
             })
             .collect();
@@ -255,6 +295,37 @@ impl Jetgraph {
             .edge_types
             .iter()
             .map(|edge| {
+                let mut props: Vec<Value> = schema
+                    .properties
+                    .iter()
+                    .filter(|p| {
+                        !p.owner_is_node && p.owner_type_name.eq_ignore_ascii_case(&edge.name)
+                    })
+                    .map(|p| {
+                        json!({
+                            "name": p.name,
+                            "value_type": value_type_label(p.value_type),
+                        })
+                    })
+                    .collect();
+                props.sort_by(|a, b| {
+                    a.get("name")
+                        .and_then(Value::as_str)
+                        .cmp(&b.get("name").and_then(Value::as_str))
+                });
+                let activity_horizon_secs = if edge.minimal_payload {
+                    0
+                } else {
+                    edge.tick_size_secs.saturating_mul(21)
+                };
+                let node_histogram = edge.node_histogram.as_ref().map(|h| {
+                    json!({
+                        "enabled_for_src": h.enabled_for_src,
+                        "enabled_for_dst": h.enabled_for_dst,
+                        "hourly_slots": h.hourly_slots,
+                        "daily_slots": h.daily_slots,
+                    })
+                });
                 json!({
                     "name": edge.name,
                     "from": edge.from_node_type,
@@ -262,9 +333,15 @@ impl Jetgraph {
                     "description": edge.description,
                     "business_meaning": edge.business_meaning,
                     "symmetric": edge.is_symmetric,
+                    "minimal_payload": edge.minimal_payload,
                     "state_ttl_secs": edge.state_ttl_secs,
                     "activity_tick_secs": edge.tick_size_secs,
+                    "activity_horizon_secs": activity_horizon_secs,
                     "bool_property": edge.bool_property,
+                    "tracked_property": edge.tracked_property,
+                    "bin_boundaries": edge.bin_boundaries,
+                    "node_histogram": node_histogram,
+                    "properties": props,
                 })
             })
             .collect();
@@ -924,6 +1001,16 @@ fn fraud_label(metric: FraudCaseMetric) -> &'static str {
         FraudCaseMetric::Count => "count",
         FraudCaseMetric::MaxScore => "max_score",
         FraudCaseMetric::LastSeen => "last_seen",
+    }
+}
+
+fn value_type_label(vt: jetgraph_client::ValueType) -> &'static str {
+    match vt {
+        jetgraph_client::ValueType::Int => "int",
+        jetgraph_client::ValueType::Float => "float",
+        jetgraph_client::ValueType::Timestamp => "timestamp",
+        jetgraph_client::ValueType::String => "string",
+        jetgraph_client::ValueType::Bool => "bool",
     }
 }
 
