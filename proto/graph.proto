@@ -269,6 +269,10 @@ message ListNodesRequest {
     string external_id_filter = 2;
     // Max results (0 = unlimited).
     uint32 limit = 3;
+    // Rows to skip before `limit` (0 = start). Paginates the full book when
+    // combined with `limit`; the batch sweep walks offset += limit until a
+    // short page. Older clients send 0 and keep the old behavior.
+    uint64 offset = 4;
 }
 
 message NodeSummary {

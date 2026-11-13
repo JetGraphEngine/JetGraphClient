@@ -681,10 +681,23 @@ impl GraphClient {
         external_id_filter: &str,
         limit: u32,
     ) -> Result<(Vec<NodeSummary>, u32), ClientError> {
+        self.list_nodes_paged(node_type_filter, external_id_filter, limit, 0)
+            .await
+    }
+
+    /// List nodes with optional filters and pagination `offset`.
+    pub async fn list_nodes_paged(
+        &self,
+        node_type_filter: &str,
+        external_id_filter: &str,
+        limit: u32,
+        offset: u64,
+    ) -> Result<(Vec<NodeSummary>, u32), ClientError> {
         let req = graph_proto::ListNodesRequest {
             node_type_filter: node_type_filter.to_string(),
             external_id_filter: external_id_filter.to_string(),
             limit,
+            offset,
         };
         let r = self
             .client
