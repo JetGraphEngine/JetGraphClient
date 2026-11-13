@@ -27,37 +27,42 @@ use serde_json::{json, Value};
 const INSTRUCTIONS: &str = "\
 1. Schema & Properties (get_schema)\n\
 Always call get_schema first before naming a node type, edge type, or property. Map the words in the user's question through each type's description and business_meaning.\n\
-- Each node_type includes: name, external_id kind ('string' or 'numeric'), description, business_meaning, and registered properties ([{name, value_type}] where value_type is int | float | string | bool | timestamp).\n\
-- Each edge_type includes: name, direction (from -> to), description, business_meaning, symmetric, minimal_payload, state_ttl_secs, activity_tick_secs, activity_horizon_secs, bool_property, tracked_property, bin_boundaries, and node_histogram.\n\
+- Each node_type includes: name, external_id kind ('string' or 'numeric'), description, business_meaning, and registered properties ([{name, value_type}] where value_type is int | float | string | bool | timestamp). In Cypher, every node also exposes n.external_id and id(n) (neither is listed in properties).\n\
+- Each edge_type includes: name, direction (from -> to), description, business_meaning, symmetric, minimal_payload, state_ttl_secs, activity_tick_secs, activity_horizon_secs, bool_property, tracked_property, bin_boundaries, node_histogram, and ingest properties.\n\
+- get_schema also returns feature_schemas (32-slot node vector definitions) and transaction_profiles.\n\
 \n\
 2. Compact Edge Structure (1 edge per (src, dst) pair)\n\
-JetGraph does NOT store one edge per event/transaction. Every (src, dst) pair on an edge type is a single in-memory compact record updated in place:\n\
-- Compact edges (minimal_payload: false): store tx_count (lifetime event count), approx_sum (accumulated numeric value such as spend/amount), last_seen (latest event unix timestamp in seconds), optional bool_property, 8 value bins, and a 21-tick sliding activity bitmap.\n\
+JetGraph does NOT store one edge per event/transaction. Every (src, dst) pair on an edge type is a single compact record updated in place:\n\
+- Compact edges (minimal_payload: false): store tx_count (lifetime event count), approx_sum (accumulated tracked_property value), last_seen (latest event unix timestamp in seconds), bool_flag (from bool_property), 8 value bins, and a 21-tick sliding activity bitmap.\n\
 - Static edges (minimal_payload: true, e.g. MEMBER_OF, SIMILAR_TO): store only approx_sum (score/confidence) and last_seen (tx_count is 1; no bitmap or bins).\n\
-- Inspect one pair with get_edge_state, or in Cypher via r.tx_count, r.approx_sum, and r.last_seen on [r:EDGE_TYPE].\n\
+- Cypher edge fields: edge_type.properties are ingest event inputs, NOT stored Cypher properties (e.g. r.weight or r.<bool_property> evaluates to NULL). Always read or filter edges via r.tx_count, r.approx_sum (alias r.amount), r.last_seen, r.bool_flag, and r.bins. Because 1 edge = 1 pair, count(r) counts distinct counterparties whereas sum(r.tx_count) counts total events/purchases and sum(r.approx_sum) sums tracked value.\n\
 \n\
-3. Time-Windowed Behavior: Node Histogram vs. Pair Activity Bitmap\n\
-- Node histogram (get_histogram): one actor's total event velocity and 8-bin value distribution across ALL counterparties on an edge type (when node_histogram is enabled). Pass window_hours OR window_days (never both). Returns total_events, bin_counts (8 buckets defined by the edge type's 7 bin_boundaries: bin 0 < b[0], ..., bin 7 >= b[6]), and window_covered_secs. Compare a short window (e.g. window_hours: 24) against a longer baseline (e.g. window_days: 7 or 30) on the same node to spot acceleration, cooling, or churn.\n\
-- Pair activity bitmap (get_edge_state): one (src, dst) pair's relationship state. found: false means a first-time interaction (novelty). Pass up to 4 windows in activity_windows_secs (e.g. [3600, 86400]) to read recent event counts on that pair from the 21-tick sliding bitmap. Its horizon is activity_horizon_secs (21 * activity_tick_secs); use get_histogram for longer windows.\n\
+3. Time-Windowed Behavior & Direction Rules\n\
+- Node histogram (get_histogram): one source ('from') actor's total event velocity and 8-bin value distribution across ALL counterparties on an edge type (when node_histogram.enabled_for_src is true; calling on a 'to'-only node returns 0). Pass window_hours (<= node_histogram.hourly_slots) OR window_days (<= node_histogram.daily_slots), never both — exceeding configured slots silently caps at the stored horizon. Returns total_events, bin_counts (8 buckets defined by the 7 bin_boundaries: bin 0 < b[0], ..., bin 7 >= b[6]), and window_covered_secs. Compare a short window (e.g. window_hours: 24) against a longer baseline within daily_slots on the same node to spot acceleration, cooling, or churn.\n\
+- Pair activity bitmap (get_edge_state): one (src, dst) pair's relationship state. found: false means a first-time interaction (novelty). Pass up to 4 windows in activity_windows_secs (e.g. [3600, 86400]) within activity_horizon_secs (21 * activity_tick_secs); use get_histogram for longer windows.\n\
 - Read them together: high node get_histogram with low pair activity_counts means activity is spread across many counterparties; similar numbers mean activity is concentrated on that single counterparty.\n\
+- Direction awareness: get_neighbors defaults to direction: 'out' — pass direction: 'in' when starting from an edge type's 'to' node. get_last_neighbor inspects outgoing ('from' -> 'to') edges only; for inbound recency on a 'to' node, use an anchored cypher_read with ORDER BY r.last_seen DESC LIMIT 1.\n\
 \n\
 4. Stored 32-Slot Feature Vector (get_feature_vector)\n\
-Returns the pre-accumulated 32-slot behavioral fingerprint for a node (slots listed in get_schema.feature_schemas), with raw, effective (after transform, weight, and fallback), support (evidence count), used_fallback, confidence, and age_secs. Note that activity_tick_count counts distinct active time ticks (regularity), whereas event_count / histogram_count counts total events (volume) — compare them to separate a single-tick burst from steady activity.\n\
+Only call get_feature_vector when get_schema.feature_schemas has an enabled: true entry for that node_type (otherwise it errors). Returns raw, effective (after transform, weight, and fallback), support (evidence count), used_fallback, confidence, and age_secs. Note that activity_tick_count counts distinct active time ticks (regularity), whereas event_count / histogram_count counts total events (volume) — compare them to separate a single-tick burst from steady activity.\n\
 \n\
 5. Querying & Cypher Rules (get_neighbors, find_similar, cypher_read)\n\
 - Prefer get_neighbors, get_neighbor_count, get_last_neighbor, get_edge_state, get_histogram, get_feature_vector, and find_similar for point and neighborhood reads. Use the same edge_type and window on every node you compare.\n\
 - find_similar computes weighted shared-neighbor Jaccard overlap across edge_weights (k <= 25) and does not write SIMILAR_TO edges.\n\
-- Use cypher_read for multi-hop paths (e.g. NEXT_MERCHANT / NEXT_SEGMENT / NEXT_OFFER_TOUCH), property filtering, or rankings. Always anchor Cypher on a node label and filter (e.g. MATCH (n:Customer {external_id: 'CUST-00001'})-[r:HOLDS]->(c:Card)) to avoid full-graph scans. Supported read clauses: MATCH, OPTIONAL MATCH, WHERE, WITH, UNWIND, RETURN, ORDER BY, LIMIT (<= 100), and CALL graph.* (graph.histogram, graph.lastNeighbor, graph.neighborCount, graph.edgeState, graph.segmentContext, graph.findSimilar).\n\
+- Use cypher_read for multi-hop paths (e.g. NEXT_MERCHANT / NEXT_SEGMENT / NEXT_OFFER_TOUCH), property filtering, or rankings. Anchor point/path queries on a node label and filter (e.g. MATCH (n:Customer {external_id: 'CUST-00001'})-[r:HOLDS]->(c:Card)) to avoid full-graph scans. Supported read clauses: MATCH, OPTIONAL MATCH, WHERE, WITH, UNWIND, RETURN, ORDER BY, literal LIMIT (1..=100; parameterized LIMIT $k is rejected, missing LIMIT defaults to 100), inline edge filters ([r:EDGE WHERE r.last_seen > $cutoff AND r.tx_count >= 2]), degree(n, 'EDGE', 'out'|'in'|'both'), and CALL graph.* (graph.histogram, graph.lastNeighbor, graph.neighborCount, graph.edgeState, graph.segmentContext, graph.fraudContext, graph.findSimilar). Pass string filter values via parameters ($val) so literals containing words like 'set' or 'load' are not blocked by the read-only guard.\n\
+- Top-K rankings: NEVER put an unanchored aggregation before WITH (e.g. MATCH ... WITH n, sum(...) AS s RETURN ...), which materializes all groups in memory and hits MemoryLimitExceeded. Always keep RETURN <key>, sum(...) AS s ORDER BY s DESC LIMIT 10 in a single block so the planner pushes TopK into Aggregate (O(k) heap).\n\
+- Multi-hop ranking timeout fallback: try a single-block TopK query first; if a multi-hop or filtered global ranking exceeds the time budget, narrow candidates with 1-hop TopK scans (LIMIT 100, sequential page reads) and rank them with an anchored WHERE n.external_id IN $ids query (IndexLookupMany via parameters), noting that the result ranks top candidates.\n\
 \n\
-6. Signals & Segments (create_signal, create_segment, list_segment_members)\n\
-- Test measurements on a sample before calling create_signal.\n\
-- create_signal stores a read-only Cypher query that binds $node (internal node ID) and returns one column named value (value_kind: 'number' or 'epoch_secs'):\n\
-  * Node property: MATCH (n) WHERE id(n) = $node RETURN n.prop_name AS value\n\
-  * Histogram window: CALL graph.histogram($node, 'EDGE', hours_or_null, days_or_null) YIELD total_events RETURN total_events AS value\n\
-  * Neighbor count: CALL graph.neighborCount($node, 'EDGE') YIELD count RETURN count AS value\n\
-  * Recency (value_kind: 'epoch_secs'): CALL graph.lastNeighbor($node, 'EDGE') YIELD last_seen_secs RETURN last_seen_secs AS value\n\
+6. Signals & Segments (list_signals, list_segments, create_signal, create_segment, list_segment_members)\n\
+- Call list_signals and list_segments before creating new definitions so you reuse existing names instead of overwriting them, and test measurements on a sample before calling create_signal.\n\
+- create_signal stores a read-only Cypher query that binds $node (internal node ID) and returns one column named value:\n\
+  * Node property ('number'): MATCH (n) WHERE id(n) = $node RETURN n.prop_name AS value\n\
+  * Histogram window ('number', time_sensitive: true): CALL graph.histogram($node, 'EDGE', hours_or_null, days_or_null) YIELD total_events RETURN total_events AS value\n\
+  * Neighbor count ('number'): CALL graph.neighborCount($node, 'EDGE') YIELD count RETURN count AS value\n\
+  * Outbound recency ('epoch_secs', time_sensitive: true): CALL graph.lastNeighbor($node, 'EDGE') YIELD last_seen_secs RETURN last_seen_secs AS value\n\
   (Pair-level get_edge_state requires a destination node and cannot be compiled into a signal.)\n\
-- create_segment and create_signal change evaluator configuration only. list_segment_members returns customers the evaluator has already linked. Always include the exact definition you used — types, properties, windows, thresholds, and scores — in the final answer.";
+- Threshold units for epoch_secs: the evaluator converts an 'epoch_secs' timestamp into elapsed DAYS ((now_secs - value) / 86400; null -> infinity) BEFORE comparing against segment condition thresholds — e.g. op: 'gt', threshold: 30 means inactive for more than 30 days.\n\
+- create_segment combines signals with logic ('all', 'any', or 'weighted' with condition weight and min_confidence default 0.5; reason supports {value}, {threshold}, {delta}, {pct}). create_segment and create_signal update evaluator configuration only; list_segment_members returns nodes the evaluator has already linked. Always include the exact definition you used — types, properties, windows, thresholds, and scores — in the final answer.";
 
 const DEFAULT_PAGE: u32 = 25;
 const MAX_PAGE: u32 = 100;
@@ -447,7 +452,7 @@ impl Jetgraph {
     }
 
     #[tool(
-        description = "The neighbor with the latest last_seen on one edge type, plus that timestamp."
+        description = "The outgoing ('from' -> 'to') neighbor with the latest last_seen on one edge type, plus that timestamp."
     )]
     async fn get_last_neighbor(&self, Parameters(args): Parameters<CountArgs>) -> CallToolResult {
         let node = match node_ref(&args.node_type, &args.external_id) {
@@ -520,7 +525,7 @@ impl Jetgraph {
     }
 
     #[tool(
-        description = "Histogram totals for one node on one edge type. Pass window_hours or window_days, and the same window for every node in a comparison."
+        description = "Histogram totals for one source ('from') node on one edge type. Pass window_hours (<= hourly_slots) OR window_days (<= daily_slots), and the same window for every node in a comparison."
     )]
     async fn get_histogram(&self, Parameters(args): Parameters<HistogramArgs>) -> CallToolResult {
         if (args.window_hours == 0 && args.window_days == 0)
@@ -553,7 +558,7 @@ impl Jetgraph {
     }
 
     #[tool(
-        description = "Stored 32-slot feature vector for one node. Slots are defined by the feature schema from get_schema. effective is the value after transform, weight, and fallback."
+        description = "Stored 32-slot feature vector for one node (only when get_schema.feature_schemas has enabled: true for its node_type). effective is the value after transform, weight, and fallback."
     )]
     async fn get_feature_vector(&self, Parameters(args): Parameters<NodeArgs>) -> CallToolResult {
         let node = match node_ref(&args.node_type, &args.external_id) {
@@ -664,7 +669,7 @@ impl Jetgraph {
     }
 
     #[tool(
-        description = "One read-only Cypher statement for a pattern the other tools do not express. CREATE, MERGE, DELETE, SET, REMOVE, and DROP are rejected. LIMIT above 100 is rejected; a missing LIMIT becomes 100."
+        description = "One read-only Cypher statement for a pattern the other tools do not express. CREATE, MERGE, DELETE, SET, REMOVE, and DROP are rejected. LIMIT above 100 is rejected; a missing LIMIT becomes 100. For unanchored rankings, keep RETURN <key>, <agg> ORDER BY <agg> DESC LIMIT k in one single block (never stage an unanchored aggregation before WITH)."
     )]
     async fn cypher_read(&self, Parameters(args): Parameters<CypherArgs>) -> CallToolResult {
         let query = match guard::prepare_cypher(&args.query) {
@@ -749,7 +754,7 @@ impl Jetgraph {
     }
 
     #[tool(
-        description = "Store a segment over existing signals. A segment with the same name is replaced. This changes evaluator configuration, not the graph. Membership appears in list_segment_members only after the evaluator has processed those nodes."
+        description = "Store a segment over existing signals (note: epoch_secs signals compare thresholds in elapsed DAYS). A segment with the same name is replaced. This changes evaluator configuration, not the graph. Membership appears in list_segment_members only after the evaluator has processed those nodes."
     )]
     async fn create_segment(
         &self,
