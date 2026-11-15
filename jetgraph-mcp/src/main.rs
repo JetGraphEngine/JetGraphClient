@@ -24,45 +24,7 @@ use rmcp::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-const INSTRUCTIONS: &str = "\
-1. Schema & Properties (get_schema)\n\
-Always call get_schema first before naming a node type, edge type, or property. Map the words in the user's question through each type's description and business_meaning.\n\
-- Each node_type includes: name, external_id kind ('string' or 'numeric'), description, business_meaning, and registered properties ([{name, value_type}] where value_type is int | float | string | bool | timestamp). In Cypher, every node also exposes n.external_id and id(n) (neither is listed in properties).\n\
-- Each edge_type includes: name, direction (from -> to), description, business_meaning, symmetric, minimal_payload, state_ttl_secs, activity_tick_secs, activity_horizon_secs, bool_property, tracked_property, bin_boundaries, node_histogram, and ingest properties.\n\
-- get_schema also returns feature_schemas (32-slot node vector definitions) and transaction_profiles.\n\
-\n\
-2. Compact Edge Structure (1 edge per (src, dst) pair)\n\
-JetGraph does NOT store one edge per event/transaction. Every (src, dst) pair on an edge type is a single compact record updated in place:\n\
-- Compact edges (minimal_payload: false): store tx_count (lifetime event count), approx_sum (accumulated tracked_property value), last_seen (latest event unix timestamp in seconds), bool_flag (from bool_property), 8 value bins, and a 21-tick sliding activity bitmap.\n\
-- Static edges (minimal_payload: true, e.g. MEMBER_OF, SIMILAR_TO): store only approx_sum (score/confidence) and last_seen (tx_count is 1; no bitmap or bins).\n\
-- Cypher edge fields: edge_type.properties are ingest event inputs, NOT stored Cypher properties (e.g. r.weight or r.<bool_property> evaluates to NULL). Always read or filter edges via r.tx_count, r.approx_sum (alias r.amount), r.last_seen, r.bool_flag, and r.bins. Because 1 edge = 1 pair, count(r) counts distinct counterparties whereas sum(r.tx_count) counts total events/purchases and sum(r.approx_sum) sums tracked value.\n\
-\n\
-3. Time-Windowed Behavior & Direction Rules\n\
-- Node histogram (get_histogram): one source ('from') actor's total event velocity and 8-bin value distribution across ALL counterparties on an edge type (when node_histogram.enabled_for_src is true; calling on a 'to'-only node returns 0). Pass window_hours (<= node_histogram.hourly_slots) OR window_days (<= node_histogram.daily_slots), never both — exceeding configured slots silently caps at the stored horizon. Returns total_events, bin_counts (8 buckets defined by the 7 bin_boundaries: bin 0 < b[0], ..., bin 7 >= b[6]), and window_covered_secs. Compare a short window (e.g. window_hours: 24) against a longer baseline within daily_slots on the same node to spot acceleration, cooling, or churn.\n\
-- Pair activity bitmap (get_edge_state): one (src, dst) pair's relationship state. found: false means a first-time interaction (novelty). Pass up to 4 windows in activity_windows_secs (e.g. [3600, 86400]) within activity_horizon_secs (21 * activity_tick_secs); use get_histogram for longer windows.\n\
-- Read them together: high node get_histogram with low pair activity_counts means activity is spread across many counterparties; similar numbers mean activity is concentrated on that single counterparty.\n\
-- Direction awareness: get_neighbors defaults to direction: 'out' — pass direction: 'in' when starting from an edge type's 'to' node. get_last_neighbor inspects outgoing ('from' -> 'to') edges only; for inbound recency on a 'to' node, use an anchored cypher_read with ORDER BY r.last_seen DESC LIMIT 1.\n\
-\n\
-4. Stored 32-Slot Feature Vector (get_feature_vector)\n\
-Only call get_feature_vector when get_schema.feature_schemas has an enabled: true entry for that node_type (otherwise it errors). Returns raw, effective (after transform, weight, and fallback), support (evidence count), used_fallback, confidence, and age_secs. Note that activity_tick_count counts distinct active time ticks (regularity), whereas event_count / histogram_count counts total events (volume) — compare them to separate a single-tick burst from steady activity.\n\
-\n\
-5. Querying & Cypher Rules (get_neighbors, find_similar, cypher_read)\n\
-- Prefer get_neighbors, get_neighbor_count, get_last_neighbor, get_edge_state, get_histogram, get_feature_vector, and find_similar for point and neighborhood reads. Use the same edge_type and window on every node you compare.\n\
-- find_similar computes weighted shared-neighbor Jaccard overlap across edge_weights (k <= 25) and does not write SIMILAR_TO edges.\n\
-- Use cypher_read for multi-hop paths (e.g. NEXT_MERCHANT / NEXT_SEGMENT / NEXT_OFFER_TOUCH), property filtering, or rankings. Anchor point/path queries on a node label and filter (e.g. MATCH (n:Customer {external_id: 'CUST-00001'})-[r:HOLDS]->(c:Card)) to avoid full-graph scans. Supported read clauses: MATCH, OPTIONAL MATCH, WHERE, WITH, UNWIND, RETURN, ORDER BY, literal LIMIT (1..=100; parameterized LIMIT $k is rejected, missing LIMIT defaults to 100), inline edge filters ([r:EDGE WHERE r.last_seen > $cutoff AND r.tx_count >= 2]), degree(n, 'EDGE', 'out'|'in'|'both'), and CALL graph.* (graph.histogram, graph.lastNeighbor, graph.neighborCount, graph.edgeState, graph.segmentContext, graph.fraudContext, graph.findSimilar). Pass string filter values via parameters ($val) so literals containing words like 'set' or 'load' are not blocked by the read-only guard.\n\
-- Top-K rankings: NEVER put an unanchored aggregation before WITH (e.g. MATCH ... WITH n, sum(...) AS s RETURN ...), which materializes all groups in memory and hits MemoryLimitExceeded. Always keep RETURN <key>, sum(...) AS s ORDER BY s DESC LIMIT 10 in a single block so the planner pushes TopK into Aggregate (O(k) heap).\n\
-- Multi-hop ranking timeout fallback: try a single-block TopK query first; if a multi-hop or filtered global ranking exceeds the time budget, narrow candidates with 1-hop TopK scans (LIMIT 100, sequential page reads) and rank them with an anchored WHERE n.external_id IN $ids query (IndexLookupMany via parameters), noting that the result ranks top candidates.\n\
-\n\
-6. Signals & Segments (list_signals, list_segments, create_signal, create_segment, list_segment_members)\n\
-- Call list_signals and list_segments before creating new definitions so you reuse existing names instead of overwriting them, and test measurements on a sample before calling create_signal.\n\
-- create_signal stores a read-only Cypher query that binds $node (internal node ID) and returns one column named value:\n\
-  * Node property ('number'): MATCH (n) WHERE id(n) = $node RETURN n.prop_name AS value\n\
-  * Histogram window ('number', time_sensitive: true): CALL graph.histogram($node, 'EDGE', hours_or_null, days_or_null) YIELD total_events RETURN total_events AS value\n\
-  * Neighbor count ('number'): CALL graph.neighborCount($node, 'EDGE') YIELD count RETURN count AS value\n\
-  * Outbound recency ('epoch_secs', time_sensitive: true): CALL graph.lastNeighbor($node, 'EDGE') YIELD last_seen_secs RETURN last_seen_secs AS value\n\
-  (Pair-level get_edge_state requires a destination node and cannot be compiled into a signal.)\n\
-- Threshold units for epoch_secs: the evaluator converts an 'epoch_secs' timestamp into elapsed DAYS ((now_secs - value) / 86400; null -> infinity) BEFORE comparing against segment condition thresholds — e.g. op: 'gt', threshold: 30 means inactive for more than 30 days.\n\
-- create_segment combines signals with logic ('all', 'any', or 'weighted' with condition weight and min_confidence default 0.5; reason supports {value}, {threshold}, {delta}, {pct}). create_segment and create_signal update evaluator configuration only; list_segment_members returns nodes the evaluator has already linked. Always include the exact definition you used — types, properties, windows, thresholds, and scores — in the final answer.";
+const INSTRUCTIONS: &str = include_str!("../instructions.md");
 
 const DEFAULT_PAGE: u32 = 25;
 const MAX_PAGE: u32 = 100;
@@ -385,7 +347,7 @@ impl Jetgraph {
     }
 
     #[tool(
-        description = "One page of neighbors on one edge type. Returns external ids. Use next_cursor to continue. Maximum 100."
+        description = "One page of neighbors on one edge type. Returns ids and created_at_us (epoch MICROseconds) only: no pair payload (tx_count, approx_sum, bins) and no recency ordering, so use cypher_read for payloads. Pass direction 'in' when starting from the edge type's 'to' node. Use next_cursor to continue. Maximum 100."
     )]
     async fn get_neighbors(&self, Parameters(args): Parameters<NeighborsArgs>) -> CallToolResult {
         let limit = match guard::clamp_page(args.limit, DEFAULT_PAGE, MAX_PAGE) {
@@ -430,7 +392,7 @@ impl Jetgraph {
         }
     }
 
-    #[tool(description = "How many neighbors a node has on one edge type.")]
+    #[tool(description = "How many distinct counterparties a node has on one edge type (pairs, not events: use cypher_read sum(r.tx_count) for events). When approximate is true, report the count as about N. Counts only live pairs, so expired pairs (state_ttl_secs) are not included.")]
     async fn get_neighbor_count(&self, Parameters(args): Parameters<CountArgs>) -> CallToolResult {
         let node = match node_ref(&args.node_type, &args.external_id) {
             Ok(node) => node,
@@ -452,7 +414,7 @@ impl Jetgraph {
     }
 
     #[tool(
-        description = "The outgoing ('from' -> 'to') neighbor with the latest last_seen on one edge type, plus that timestamp."
+        description = "The outgoing ('from' -> 'to') neighbor with the latest last_seen on one edge type, plus that timestamp in epoch seconds. Subtract it from server_time_secs to get the age. For inbound recency use cypher_read ordered by r.last_seen DESC."
     )]
     async fn get_last_neighbor(&self, Parameters(args): Parameters<CountArgs>) -> CallToolResult {
         let node = match node_ref(&args.node_type, &args.external_id) {
@@ -465,7 +427,11 @@ impl Jetgraph {
             .get_last_neighbor(node, &args.edge_type, None)
             .await
         {
-            Ok(None) => tool_ok(json!({ "found": false, "edge_type": args.edge_type })),
+            Ok(None) => tool_ok(json!({
+                "found": false,
+                "edge_type": args.edge_type,
+                "server_time_secs": now_secs(),
+            })),
             Ok(Some((node_id, last_seen_secs))) => {
                 let identity = self.identity(node_id).await;
                 tool_ok(json!({
@@ -475,6 +441,7 @@ impl Jetgraph {
                     "node_type": identity.as_ref().map(|item| item.0.clone()),
                     "external_id": identity.and_then(|item| item.1),
                     "last_seen_secs": last_seen_secs,
+                    "server_time_secs": now_secs(),
                 }))
             }
             Err(error) => tool_err(error.to_string()),
@@ -482,7 +449,7 @@ impl Jetgraph {
     }
 
     #[tool(
-        description = "State of one pair: tx_count, approx_sum, last_seen, and optional activity-window counts. A missing pair means the relationship has not been seen."
+        description = "State of one (src, dst) pair: tx_count (lifetime events), approx_sum (approximate tracked value; 0 on edge types without a tracked property), last_seen_secs (epoch seconds), bool_flag, and activity_counts for up to four windows in seconds, aligned to server_time_secs. activity_counts are LOWER BOUNDS (each 3-bit tick saturates at 7), rounded up to whole ticks and capped at 21 x activity_tick_secs. found: false means no live record: it is novelty only when state_ttl_secs is 0, because pairs idle longer than state_ttl_secs are deleted. Static (minimal_payload) edge types have no activity windows."
     )]
     async fn get_edge_state(&self, Parameters(args): Parameters<EdgeStateArgs>) -> CallToolResult {
         if args.activity_windows_secs.len() > MAX_WINDOWS {
@@ -509,7 +476,11 @@ impl Jetgraph {
             .get_edge_state(&args.edge_type, src, dst, None, windows)
             .await
         {
-            Ok(None) => tool_ok(json!({ "found": false, "edge_type": args.edge_type })),
+            Ok(None) => tool_ok(json!({
+                "found": false,
+                "edge_type": args.edge_type,
+                "server_time_secs": now_secs(),
+            })),
             Ok(Some(state)) => tool_ok(json!({
                 "found": state.found,
                 "edge_type": args.edge_type,
@@ -519,13 +490,14 @@ impl Jetgraph {
                 "activity_windows_secs": args.activity_windows_secs,
                 "activity_counts": state.activity_counts,
                 "bool_flag": state.bool_flag,
+                "server_time_secs": now_secs(),
             })),
             Err(error) => tool_err(error.to_string()),
         }
     }
 
     #[tool(
-        description = "Histogram totals for one source ('from') node on one edge type. Pass window_hours (<= hourly_slots) OR window_days (<= daily_slots), and the same window for every node in a comparison."
+        description = "Histogram totals for one source ('from') node on one edge type, across all its counterparties: total_events (a count, never a value sum), bin_counts (8 value buckets from bin_boundaries) and window_covered_secs. Pass window_hours (<= hourly_slots) OR window_days (<= daily_slots), and the same window for every node in a comparison. Zero on a 'to'-only node does not mean no activity. Each bin per slot saturates at 255, so very busy windows are lower bounds. Compare rates, not raw totals, when windows differ."
     )]
     async fn get_histogram(&self, Parameters(args): Parameters<HistogramArgs>) -> CallToolResult {
         if (args.window_hours == 0 && args.window_days == 0)
@@ -552,13 +524,14 @@ impl Jetgraph {
                 "total_events": result.total_events,
                 "bin_counts": result.total_counts,
                 "window_covered_secs": result.window_covered_secs,
+                "server_time_secs": now_secs(),
             })),
             Err(error) => tool_err(error.to_string()),
         }
     }
 
     #[tool(
-        description = "Stored 32-slot feature vector for one node (only when get_schema.feature_schemas has enabled: true for its node_type). effective is the value after transform, weight, and fallback."
+        description = "Stored 32-slot feature vector for one node (only when get_schema.feature_schemas has enabled: true for its node_type). Per slot: raw (measured), effective (after transform, weight and fallback), support (evidence count) and used_fallback (true means a default, not an observation). Vector level: confidence, age_secs (time since computed), quality_flags (non-zero means a data-quality condition; mention it)."
     )]
     async fn get_feature_vector(&self, Parameters(args): Parameters<NodeArgs>) -> CallToolResult {
         let node = match node_ref(&args.node_type, &args.external_id) {
@@ -930,6 +903,14 @@ impl ServerHandler for Jetgraph {
     }
 }
 
+/// Current time in epoch seconds. Agents need it to turn `last_seen_secs` into an age.
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 fn tool_ok(value: Value) -> CallToolResult {
     CallToolResult::success(vec![ContentBlock::text(value.to_string())])
 }
@@ -1136,6 +1117,44 @@ mod handshake {
     use rmcp::{ClientHandler, ServerHandler, ServiceExt};
 
     use super::Jetgraph;
+
+    use crate::{now_secs, INSTRUCTIONS};
+
+    #[test]
+    fn instructions_cover_jetgraph_data_semantics() {
+        for required in [
+            "business_meaning",
+            "get_schema",
+            "COMPACT RECORD PER PAIR",
+            "Slim",
+            "Static",
+            "saturate",
+            "state_ttl_secs",
+            "approximate",
+            "server_time_secs",
+            "created_at_us",
+            "ANALYSIS PLAYBOOK",
+            "HOW TO REPORT",
+            "MemoryLimitExceeded",
+        ] {
+            assert!(
+                INSTRUCTIONS.contains(required),
+                "INSTRUCTIONS is missing {required:?}"
+            );
+        }
+        for forbidden in ["CUST-", "Customer", "MERCHANT", "HOLDS", "NEXT_OFFER"] {
+            assert!(
+                !INSTRUCTIONS.contains(forbidden),
+                "INSTRUCTIONS must stay schema-independent but contains {forbidden:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn now_secs_is_a_plausible_epoch() {
+        let now = now_secs();
+        assert!(now > 1_704_067_200 && now < 4_102_444_800, "now={now}");
+    }
 
     #[derive(Default)]
     struct NopClient;
