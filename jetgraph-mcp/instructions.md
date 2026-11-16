@@ -63,6 +63,7 @@ Always follow a surprising number with a second, independent check (a different 
 - Top-K: NEVER put an unanchored aggregation before WITH (MATCH ... WITH n, sum(...) AS s RETURN ...); it materializes every group and fails with MemoryLimitExceeded. Keep RETURN <key>, sum(...) AS s ORDER BY s DESC LIMIT 10 in a single block so the planner keeps only k rows.
 - Ranking fallback: if a multi-hop or filtered global ranking exceeds the time budget, narrow candidates with 1-hop Top-K scans (LIMIT 100, page by page), then rank those candidates with an anchored WHERE n.external_id IN $ids query. State that you ranked the top candidates, not the whole graph.
 - Output may be truncated (truncated: true in the result). Say so and narrow the query instead of presenting a partial list as complete.
+- Node identifiers: id(n), node_id, startNode, endNode, path node ids, and graph.lastNeighbor's neighbor_node_id are internal engine ids. Always project n.external_id (and labels(n) when helpful) instead of id(n), RETURN r, or RETURN path. If a query only returned internal ids, resolve them before answering with MATCH (n) WHERE id(n) IN $ids RETURN id(n) AS node_id, labels(n) AS labels, n.external_id AS external_id (or use get_last_neighbor instead of CALL graph.lastNeighbor).
 
 8. STORED 32-SLOT FEATURE VECTORS (get_feature_vector)
 - Call it only when get_schema.feature_schemas has enabled: true for that node_type (otherwise it errors).
@@ -82,6 +83,7 @@ Always follow a surprising number with a second, independent check (a different 
 - create_segment combines signals with logic 'all', 'any', or 'weighted' (condition weight, min_confidence default 0.5; reason supports {value}, {threshold}, {delta}, {pct}). create_signal and create_segment change evaluator configuration only, not the graph. list_segment_members returns only nodes the evaluator has already processed, so an empty list right after creation is normal.
 
 10. HOW TO REPORT
+- Always identify nodes by their external_id (e.g. NodeType:external_id), never by internal engine numbers (node_id, id(n), startNode/endNode, neighbor_node_id, or next_cursor), unless external_id is null or absent.
 - State the definitions you used: edge types, properties or fields, windows (with server_time_secs), thresholds, and scores.
 - Mark each figure as exact, approximate, or lower bound (sections 2 and 3), and name the reason.
 - Separate observation (what the graph shows) from interpretation (what it may mean). Do not claim causation, intent, or identity from graph structure alone.
