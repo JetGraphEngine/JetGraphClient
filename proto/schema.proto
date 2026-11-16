@@ -17,8 +17,12 @@ service SchemaService {
     // Propose a transaction profile over the enabled node schemas named in the
     // request, with weights scaled so ordinary traffic ranks mid-range.
     rpc SuggestTransactionProfile (SuggestTransactionProfileRequest) returns (SuggestTransactionProfileResponse);
-    // Remove an edge type from the live schema and drop all edges of that type.
+    // Remove an edge type from the live schema (and optionally drop all edges of that type).
     rpc RemoveEdgeType           (RemoveEdgeTypeRequest) returns (RemoveEdgeTypeResponse);
+    // Remove an empty node type from the live schema (fails if nodes or referencing edges/features exist).
+    rpc RemoveNodeType           (RemoveNodeTypeRequest) returns (RemoveNodeTypeResponse);
+    // Remove an empty property from a node or edge type (fails if values or referencing features exist).
+    rpc RemoveProperty           (RemovePropertyRequest) returns (RemovePropertyResponse);
 }
 
 // How external IDs for this node type are stored and hashed.
@@ -209,6 +213,8 @@ message GetMemoryUsageResponse {
 
 message RemoveEdgeTypeRequest {
     string name = 1;
+    // When true, rejects removal if any edge pairs exist on this edge type.
+    bool require_empty = 2;
 }
 
 message RemoveEdgeTypeResponse {
@@ -216,6 +222,24 @@ message RemoveEdgeTypeResponse {
     uint32 edge_type_id   = 1;
     // How many edge pairs were dropped from the in-memory store.
     uint64 pairs_dropped  = 2;
+}
+
+message RemoveNodeTypeRequest {
+    string name = 1;
+}
+
+message RemoveNodeTypeResponse {
+    uint32 node_type_id = 1;
+}
+
+message RemovePropertyRequest {
+    string name            = 1;
+    string owner_type_name = 2;
+    bool   owner_is_node   = 3;
+}
+
+message RemovePropertyResponse {
+    uint32 property_id = 1;
 }
 
 // ---------------------------------------------------------------------------

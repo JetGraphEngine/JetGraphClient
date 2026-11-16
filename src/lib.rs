@@ -595,6 +595,28 @@ impl Client {
         self.schema().remove_edge_type(name).await
     }
 
+    /// Remove an edge type only when zero edge pairs exist on it.
+    pub async fn remove_edge_type_if_empty(&self, name: &str) -> Result<u32, ClientError> {
+        self.schema().remove_edge_type_if_empty(name).await
+    }
+
+    /// Remove an empty node type from the schema.
+    pub async fn remove_node_type(&self, name: &str) -> Result<u32, ClientError> {
+        self.schema().remove_node_type(name).await
+    }
+
+    /// Remove an empty property from a node or edge type.
+    pub async fn remove_property(
+        &self,
+        owner_type_name: &str,
+        owner_is_node: bool,
+        name: &str,
+    ) -> Result<u32, ClientError> {
+        self.schema()
+            .remove_property(owner_type_name, owner_is_node, name)
+            .await
+    }
+
     /// Query current memory usage across nodes, edges, histograms, and runtime overhead.
     ///
     /// Returns a [`MemoryUsage`] with per-category byte counts and a human-readable

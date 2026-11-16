@@ -260,6 +260,7 @@ impl SchemaClient {
     ) -> Result<RemoveEdgeTypeResult, ClientError> {
         let req = schema_proto::RemoveEdgeTypeRequest {
             name: name.to_string(),
+            require_empty: false,
         };
         let r = self
             .client
@@ -271,6 +272,56 @@ impl SchemaClient {
             edge_type_id: inner.edge_type_id,
             pairs_dropped: inner.pairs_dropped,
         })
+    }
+
+    /// Remove an edge type only when it currently stores zero edge pairs.
+    pub async fn remove_edge_type_if_empty(
+        &mut self,
+        name: &str,
+    ) -> Result<u32, ClientError> {
+        let req = schema_proto::RemoveEdgeTypeRequest {
+            name: name.to_string(),
+            require_empty: true,
+        };
+        let r = self
+            .client
+            .remove_edge_type(req)
+            .await
+            .map_err(ClientError::from)?;
+        Ok(r.into_inner().edge_type_id)
+    }
+
+    /// Remove an empty node type from the schema (fails if nodes or referencing edges/features exist).
+    pub async fn remove_node_type(&mut self, name: &str) -> Result<u32, ClientError> {
+        let req = schema_proto::RemoveNodeTypeRequest {
+            name: name.to_string(),
+        };
+        let r = self
+            .client
+            .remove_node_type(req)
+            .await
+            .map_err(ClientError::from)?;
+        Ok(r.into_inner().node_type_id)
+    }
+
+    /// Remove an empty property from a node or edge type.
+    pub async fn remove_property(
+        &mut self,
+        owner_type_name: &str,
+        owner_is_node: bool,
+        name: &str,
+    ) -> Result<u32, ClientError> {
+        let req = schema_proto::RemovePropertyRequest {
+            name: name.to_string(),
+            owner_type_name: owner_type_name.to_string(),
+            owner_is_node,
+        };
+        let r = self
+            .client
+            .remove_property(req)
+            .await
+            .map_err(ClientError::from)?;
+        Ok(r.into_inner().property_id)
     }
 
     /// Query current memory usage across nodes, edges, histograms, and runtime overhead.
