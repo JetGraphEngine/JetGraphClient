@@ -133,6 +133,8 @@ message NodeTypeInfo {
     string         description = 4;
     // Why this type exists in the business. Empty when none was written.
     string         business_meaning = 5;
+    // Live O(1) count of nodes of this type currently in the engine.
+    uint64         node_count = 6;
 }
 
 message EdgeTypeInfo {
@@ -157,6 +159,10 @@ message EdgeTypeInfo {
     optional NodeHistogramConfig node_histogram = 12;
     // True when registered with minimal_payload = true (8-byte static edge).
     bool minimal_payload = 13;
+    // Live O(1) count of distinct (src, dst) edge records currently stored.
+    uint64 pair_count     = 14;
+    // Live O(1) count of distinct source nodes that have at least one edge of this type.
+    uint64 src_node_count = 15;
 }
 
 message PropertyInfo {
@@ -173,6 +179,8 @@ message GetSchemaResponse {
     repeated PropertyInfo properties  = 4;
     repeated NodeFeatureSchemaSpec node_feature_schemas = 5;
     repeated TransactionFeatureProfileSpec transaction_feature_profiles = 6;
+    // Engine's intermediate Cypher result memory cap in bytes (0 = unlimited).
+    uint64 max_result_bytes = 7;
 }
 
 message NodeTypeResponse {

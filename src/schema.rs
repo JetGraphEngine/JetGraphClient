@@ -461,6 +461,7 @@ impl SchemaClient {
         let inner = r.into_inner();
         Ok(GetSchemaResult {
             schema_version: inner.schema_version,
+            max_result_bytes: inner.max_result_bytes,
             node_feature_schemas: inner.node_feature_schemas,
             transaction_feature_profiles: inner.transaction_feature_profiles,
             properties: inner
@@ -483,6 +484,7 @@ impl SchemaClient {
                     numeric_ids: n.ext_id_kind != schema_proto::ExternalIdKind::String as i32,
                     description: n.description,
                     business_meaning: n.business_meaning,
+                    node_count: n.node_count,
                 })
                 .collect(),
             edge_types: inner
@@ -525,6 +527,8 @@ impl SchemaClient {
                         bin_boundaries,
                         tracked_property,
                         node_histogram,
+                        pair_count: e.pair_count,
+                        src_node_count: e.src_node_count,
                     }
                 })
                 .collect(),
@@ -535,6 +539,7 @@ impl SchemaClient {
 #[derive(Debug, Clone)]
 pub struct GetSchemaResult {
     pub schema_version: u32,
+    pub max_result_bytes: u64,
     pub node_types: Vec<NodeTypeInfo>,
     pub edge_types: Vec<EdgeTypeInfo>,
     pub properties: Vec<PropertyInfo>,
@@ -569,6 +574,8 @@ pub struct NodeTypeInfo {
     pub description: String,
     /// Why this type exists in the business. Empty when none was written.
     pub business_meaning: String,
+    /// Live O(1) count of nodes of this type currently in the engine.
+    pub node_count: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -598,6 +605,10 @@ pub struct EdgeTypeInfo {
     pub tracked_property: Option<String>,
     /// Per-node timed histogram ring configuration when enabled for this edge type.
     pub node_histogram: Option<EdgeHistogramInfo>,
+    /// Live O(1) count of distinct (src, dst) edge records currently stored.
+    pub pair_count: u64,
+    /// Live O(1) count of distinct source nodes that have at least one edge of this type.
+    pub src_node_count: u64,
 }
 
 /// Result returned by [`SchemaClient::remove_edge_type`].

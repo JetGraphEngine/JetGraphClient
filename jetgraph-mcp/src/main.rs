@@ -219,7 +219,7 @@ fn default_logic() -> String {
 #[tool_router]
 impl Jetgraph {
     #[tool(
-        description = "Live schema: node types (with registered properties), edge types (with compact payload, histogram, bin boundaries, and activity bitmap settings), descriptions, business meanings, and stored feature-vector slots. Call this before using a type or property name."
+        description = "Live schema and O(1) graph size stats: node types (with node_count and registered properties), edge types (with pair_count, src_node_count, compact payload, histogram, bin boundaries, and activity bitmap settings), max_result_bytes, descriptions, business meanings, and stored feature-vector slots. Call this before using a type or property name."
     )]
     async fn get_schema(&self) -> CallToolResult {
         let mut schema_client = self.graph.schema();
@@ -254,6 +254,7 @@ impl Jetgraph {
                     "description": node.description,
                     "business_meaning": node.business_meaning,
                     "external_id": if node.numeric_ids { "numeric" } else { "string" },
+                    "node_count": node.node_count,
                     "properties": props,
                 })
             })
@@ -308,6 +309,8 @@ impl Jetgraph {
                     "tracked_property": edge.tracked_property,
                     "bin_boundaries": edge.bin_boundaries,
                     "node_histogram": node_histogram,
+                    "pair_count": edge.pair_count,
+                    "src_node_count": edge.src_node_count,
                     "properties": props,
                 })
             })
@@ -339,6 +342,7 @@ impl Jetgraph {
             .collect();
         tool_ok(json!({
             "schema_version": schema.schema_version,
+            "max_result_bytes": schema.max_result_bytes,
             "node_types": node_types,
             "edge_types": edge_types,
             "feature_schemas": feature_schemas,
